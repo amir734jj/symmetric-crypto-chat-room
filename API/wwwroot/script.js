@@ -1,5 +1,52 @@
 angular.module("chatApp", [])
-  .controller("chatCtrl", $scope => {
+  .config(['$compileProvider', function ($compileProvider) {
+      $compileProvider.aHrefSanitizationWhitelist(/^\s*(https?|local|data|chrome-extension):/);
+  }])
+  .directive('fileModel', [
+   '$parse',
+   function ($parse) {
+     return {
+       restrict: 'A',
+       link: function(scope, element, attrs) {
+         var model = $parse(attrs.fileModel);
+         var modelSetter = model.assign;
+
+         element.bind('change', function(){
+           scope.$apply(function(){
+             if (attrs.multiple) {
+               modelSetter(scope, element[0].files);
+             }
+             else {
+               modelSetter(scope, element[0].files[0]);
+             }
+           });
+         });
+       }
+     };
+   }])
+  .directive("fileRead", [function () {
+      return {
+          scope: {
+              fileRead: "="
+          },
+          link: function (scope, element, attributes) {
+              element.bind("change", function (changeEvent) {
+                  var reader = new FileReader();
+                  reader.onload = function (loadEvent) {
+                      scope.$apply(function () {
+                          scope.fileRead = loadEvent.target.result;
+                      });
+                  }
+                  reader.readAsDataURL(changeEvent.target.files[0]);
+              });
+
+              scope.$watch(attributes.fileRead, function(file) {
+                element.val(file);
+              });
+          }
+      }
+  }])
+  .controller("chatCtrl", ["$scope", "$timeout", ($scope, $timeout) => {
     $scope.name = "";
     $scope.password = "";
     $scope.initialized = false;
@@ -57,7 +104,8 @@ angular.module("chatApp", [])
             name: data.name,
             raw: data.message,
             message: $scope.crypto.decrypt(data.message),
-            date: moment(data.date).format('h:mm:ss a')
+            date: moment(data.date).format('h:mm:ss a'),
+            file: data.file ? { name: data.file.name, data: $scope.crypto.decrypt(data.file.data) } : null
           });
         });
       });
@@ -66,9 +114,55 @@ angular.module("chatApp", [])
         console.log(data);
       });
 
+      $scope.download = (base64, name) => {
+        download(base64, name);
+      };
+
+      $scope.clean = () => {
+        angular.element("input[type='file']").val(null);
+        $scope.message = "";
+        $scope.fileInfo = null;
+        $scope.fileData = null;
+      };
+
+      $scope.validateBase64 = (base64) => {
+        base64 = base64.split(',')[1];
+        return new RegExp(/^([0-9a-zA-Z+/]{4})*(([0-9a-zA-Z+/]{2}==)|([0-9a-zA-Z+/]{3}=))?$/).test(base64);
+      };
+
       $scope.send = () => {
         var data = document.getElementById("message").value;
-        conn.invoke("Send", { name: $scope.name, message: $scope.crypto.encrypt($scope.message), date: new Date() });
+
+        if ($scope.fileInfo) {
+          if (!$scope.fileData) {
+            var errorMessage = "File is being converted to base64";
+            alert(errorMessage);
+            throw new Error(errorMessage);
+          }
+
+          $timeout(() => {
+            conn.invoke("Send", {
+              name: $scope.name,
+              message: $scope.crypto.encrypt($scope.message),
+              date: new Date(),
+              file: {
+                name: $scope.fileInfo.name,
+                data: $scope.crypto.encrypt($scope.fileData)
+              }
+            });
+
+          $scope.clean();
+
+          }, 100);
+        } else {
+          conn.invoke("Send", {
+            name: $scope.name,
+            message: $scope.crypto.encrypt($scope.message),
+            date: new Date()
+          });
+
+          $scope.clean();
+        }
       };
 
       conn.start()
@@ -79,4 +173,4 @@ angular.module("chatApp", [])
           console.log("error")
       });
     };
-  });
+  }]);

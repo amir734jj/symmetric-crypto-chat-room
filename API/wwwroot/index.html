@@ -11,6 +11,7 @@
     <script src="https://cdnjs.cloudflare.com/ajax/libs/aes-js/3.1.0/index.min.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/js-sha256/0.9.0/sha256.min.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/moment.js/2.22.0/moment.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/downloadjs/1.4.7/download.min.js"></script>
 </head>
 <body ng-app="chatApp" ng-controller="chatCtrl" ng-cloak>
     <!--<input type="text" id="message" />-->
@@ -30,6 +31,7 @@
                     <label for="password">Password:</label>
                     <input type="password" class="form-control" id="password" placeholder="Enter password" ng-model="password" required />
                 </div>
+                
                 <button type="submit" class="btn btn-primary">Join</button>
             </form>
         </div>
@@ -44,6 +46,13 @@
                     <label for="message">Write the message text:</label>
                     <textarea  class="form-control" id="message" placeholder="Enter message" ng-model="message" required></textarea>
                 </div>
+                
+                <span>
+                    Browse attachment: <input class="form-control" id="file" type="file" file-read="fileData" file-model="fileInfo" />
+                </span>
+                
+                <br />
+                
                 <button type="submit" class="btn btn-success">Send message</button>
             </form>
 
@@ -64,6 +73,11 @@
                         <pre ng-bind="message.message" ng-if="!message.view_raw"></pre>
                         <pre ng-bind="message.raw" ng-if="message.view_raw"></pre>
                         <button class="btn btn-default" ng-click="message.view_raw = !message.view_raw">{{ !message.view_raw ? "View Raw" : "View Message" }}</button>
+
+                        <span class="label label-danger" ng-if="message.file && !validateBase64(message.file.data)">Invalid file</span>
+                        <a class="btn btn-primary" ng-click="download(message.file.data, message.file.name)" ng-if="message.file && validateBase64(message.file.data)">
+                            Download file
+                        </a>
                     </div>
                 </div>
             </ul>
