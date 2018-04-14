@@ -1,0 +1,76 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Symmetric Crypto Chat Room</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <link rel="stylesheet" href="https://maxcdn.bootstrapcdn.com/bootstrap/3.3.7/css/bootstrap.min.css">
+    <link rel="stylesheet" href="style.css">
+    <script src="https://ajax.googleapis.com/ajax/libs/jquery/3.3.1/jquery.min.js"></script>
+    <script src="https://ajax.googleapis.com/ajax/libs/angularjs/1.6.4/angular.min.js"></script>
+    <script src="https://maxcdn.bootstrapcdn.com/bootstrap/3.3.7/js/bootstrap.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/aes-js/3.1.0/index.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/js-sha256/0.9.0/sha256.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/moment.js/2.22.0/moment.min.js"></script>
+</head>
+<body ng-app="chatApp" ng-controller="chatCtrl" ng-cloak>
+    <!--<input type="text" id="message" />-->
+    <!--<input type="button" id="send" value="Send" class="btn btn-success" />-->
+
+    <div class="container">
+        <div ng-hide="initialized">
+            <h3>Enter public chat room:</h3>
+            <p>Your <code>password</code> is not shared, both encryption and decryption (<code>AES-256-CTR</code> with <code>SHA-256</code> hash) is all done in client-slide</p>
+            <hr />
+            <form ng-submit="initialize()">
+                <div class="form-group">
+                    <label for="name">Name:</label>
+                    <input type="name" class="form-control" id="name" placeholder="Enter name" ng-model="name" required />
+                </div>
+                <div class="form-group">
+                    <label for="password">Password:</label>
+                    <input type="password" class="form-control" id="password" placeholder="Enter password" ng-model="password" required />
+                </div>
+                <button type="submit" class="btn btn-primary">Join</button>
+            </form>
+        </div>
+        
+        <div ng-show="initialized">
+            <h3>Send a new message:</h3>
+            <p>Note that <code>password</code> is never sent via a socket, You are responsible to exchange the symmetric key</p>
+            <hr />
+            
+            <form ng-show="initialized" ng-submit="send()">
+                <div class="form-group">
+                    <label for="message">Write the message text:</label>
+                    <textarea  class="form-control" id="message" placeholder="Enter message" ng-model="message" required></textarea>
+                </div>
+                <button type="submit" class="btn btn-success">Send message</button>
+            </form>
+
+            <div class="clear-fix"></div>
+            <hr />
+            
+            <h3>Messages:</h3>
+            <br />
+
+            <div class="alert alert-info" ng-show="messages.length == 0">
+                <strong>Info!</strong> No message yet.
+            </div>
+            
+            <ul id="messages">
+                <div class="panel panel-default" ng-repeat="message in messages">
+                    <div class="panel-heading">From: <label>{{message.name}}</label> <label class="pull-right">Sent on: {{message.date}}</label></div>
+                    <div class="panel-body">
+                        <pre ng-bind="message.message" ng-if="!message.view_raw"></pre>
+                        <pre ng-bind="message.raw" ng-if="message.view_raw"></pre>
+                        <button class="btn btn-default" ng-click="message.view_raw = !message.view_raw">{{ !message.view_raw ? "View Raw" : "View Message" }}</button>
+                    </div>
+                </div>
+            </ul>
+        </div>
+    </div>
+
+    <script src="signalr.min.js"></script>
+    <script src="script.js"></script>
+</body>
+</html>
