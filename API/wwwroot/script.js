@@ -167,7 +167,7 @@ angular.module("chatApp", [])
         }
       };
 
-      conn.start("Amir")
+      conn.start()
           .then(() => {
           console.log("Started");
       })
