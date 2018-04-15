@@ -4,6 +4,8 @@ Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "API", "API\API.csproj", "{E
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Models", "Models\Models.csproj", "{28AB4D1C-1BAD-421F-93A5-12C083F1D68D}"
 EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Domainlogic", "Domainlogic\Domainlogic.csproj", "{E3007FB2-B1FB-49A6-942D-776969C67400}"
+EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
 		Debug|Any CPU = Debug|Any CPU
@@ -18,5 +20,9 @@ Global
 		{28AB4D1C-1BAD-421F-93A5-12C083F1D68D}.Debug|Any CPU.Build.0 = Debug|Any CPU
 		{28AB4D1C-1BAD-421F-93A5-12C083F1D68D}.Release|Any CPU.ActiveCfg = Release|Any CPU
 		{28AB4D1C-1BAD-421F-93A5-12C083F1D68D}.Release|Any CPU.Build.0 = Release|Any CPU
+		{E3007FB2-B1FB-49A6-942D-776969C67400}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{E3007FB2-B1FB-49A6-942D-776969C67400}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{E3007FB2-B1FB-49A6-942D-776969C67400}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{E3007FB2-B1FB-49A6-942D-776969C67400}.Release|Any CPU.Build.0 = Release|Any CPU
 	EndGlobalSection
 EndGlobal

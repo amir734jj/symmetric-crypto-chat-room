@@ -18,6 +18,7 @@
     <!--<input type="button" id="send" value="Send" class="btn btn-success" />-->
 
     <div class="container">
+        
         <div ng-hide="initialized">
             <h3>Enter public chat room:</h3>
             <p>Your <code>password</code> is not shared, both encryption and decryption (<code>AES-256-CTR</code> with <code>SHA-256</code> hash) is all done in client-slide</p>
@@ -38,6 +39,7 @@
         
         <div ng-show="initialized">
             <h3>Send a new message:</h3>
+            <span class="label label-default pull-right">{{activeUserCount}} active</span>
             <p>Note that <code>password</code> is never sent via a socket, You are responsible to exchange the symmetric key</p>
             <hr />
             

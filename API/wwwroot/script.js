@@ -50,6 +50,7 @@ angular.module("chatApp", [])
     $scope.name = "";
     $scope.password = "";
     $scope.initialized = false;
+    $scope.activeUserCount = 0;
 
     var crypto = (key) => {
       var hash = sha256.create();
@@ -100,6 +101,7 @@ angular.module("chatApp", [])
 
       conn.on("SendMessage", data => {
         $scope.$apply(() => {
+          // Add to the head of array
           $scope.messages.unshift({
             name: data.name,
             raw: data.message,
@@ -110,8 +112,8 @@ angular.module("chatApp", [])
         });
       });
 
-      conn.on("SendAction", data => {
-        console.log(data);
+      conn.on("SendAction", (data, activeUserCount) => {
+        $scope.$apply(() => $scope.activeUserCount = activeUserCount );
       });
 
       $scope.download = (base64, name) => {
@@ -165,7 +167,7 @@ angular.module("chatApp", [])
         }
       };
 
-      conn.start()
+      conn.start("Amir")
           .then(() => {
           console.log("Started");
       })
