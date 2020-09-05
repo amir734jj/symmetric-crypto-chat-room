@@ -41,6 +41,15 @@
             <h3>Send a new message:</h3>
             <span class="label label-default pull-right">{{activeUserCount}} active</span>
             <p>Note that <code>password</code> is never sent via a socket, You are responsible to exchange the symmetric key</p>
+            
+            <div class="row">
+                <div class="col-sm-2 col-md-offset-10">
+                    <div class="pull-right">
+                        <button class="btn btn-danger" type="button" ng-click="logOut()"> logout </button>
+                    </div>
+                </div>
+            </div>
+            
             <hr />
             
             <form ng-show="initialized" ng-submit="send()">
@@ -84,9 +93,15 @@
                 </div>
             </ul>
         </div>
+
+
+        <audio id="myAudio" style="display: none">
+            <source src="message.mp3" type="audio/mpeg">
+            Your browser does not support the audio element.
+        </audio>
     </div>
 
-    <script src="signalr.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@microsoft/signalr@3.1.7/dist/browser/signalr.min.js"></script>
     <script src="script.js"></script>
 </body>
 </html>
