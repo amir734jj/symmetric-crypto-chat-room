@@ -114,13 +114,17 @@ angular.module("chatApp", [])
       };
     };
 
+    function setCookies() {
+      setCookie('symmetric-crypto-exp', moment().toISOString());
+      setCookie('symmetric-crypto-name', $scope.name);
+      setCookie('symmetric-crypto-password', $scope.password);
+    }
+
     $scope.initialize = () => {
       $scope.initialized = true;
       $scope.crypto = crypto($scope.password)
       init();
-      setCookie('symmetric-crypto-exp', moment().toISOString());
-      setCookie('symmetric-crypto-name', $scope.name);
-      setCookie('symmetric-crypto-password', $scope.password);
+      setCookies();
     };
     
     $scope.logOut = () => {
@@ -223,4 +227,6 @@ angular.module("chatApp", [])
       $scope.password = getCookie('symmetric-crypto-password');
       $scope.initialize();
     }
+    
+    setInterval(() => $scope.initialized && setCookies(), 1000 * 60 * 10);
   }]);
