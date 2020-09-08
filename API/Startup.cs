@@ -30,7 +30,12 @@ namespace API
 
             app.UseFileServer();
 
-            app.UseEndpoints(c => c.MapHub<MessageHub>("/chat"));
+            app.UseRouting();
+
+            app.UseEndpoints(c =>
+            {
+                c.MapHub<MessageHub>("/chat");
+            });
         }
     }
 }
