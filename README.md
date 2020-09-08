@@ -9,7 +9,7 @@ Simple secure chat room web (+ file transfer) application using SignalR (dotnet 
 - Both encryption and decryption is all done in client-slide, only ciphertexts are transmitted via Sockets
 - File name is transmitted as plaintext but file blob is transmitted as ciphertext
 - Max file size is `50mb`
-- session password is store as plaintext via a cookie in your browser
+- Session password is store as plaintext via a cookie in your browser
 
 ### Screenshots
 
