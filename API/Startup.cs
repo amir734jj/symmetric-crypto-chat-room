@@ -19,7 +19,12 @@ namespace API
         // For more information on how to configure your application, visit https://go.microsoft.com/fwlink/?LinkID=398940
         public void ConfigureServices(IServiceCollection services)
         {
-            services.AddSignalR();
+            services.AddSignalR(c =>
+            {
+                c.MaximumReceiveMessageSize = 10 * 1024 * 1024; // 10 mega-bytes
+                c.StreamBufferCapacity = 50;
+                c.EnableDetailedErrors = true;
+            });
         }
 
         // This method gets called by the runtime. Use this method to configure the HTTP request pipeline.
@@ -30,14 +35,9 @@ namespace API
                 app.UseDeveloperExceptionPage();
             }
 
-            // app.Run(async (context) => { await context.Response.WriteAsync("Hello World!"); });
-
             app.UseFileServer();
-            
-            app.UseSignalR(route =>
-            {
-                route.MapHub<MessageHub>("/chat");
-            });
+
+            app.UseEndpoints(c => c.MapHub<MessageHub>("/chat"));
         }
     }
 }
