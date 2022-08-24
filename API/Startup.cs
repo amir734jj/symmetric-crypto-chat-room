@@ -14,7 +14,7 @@ namespace API
         {
             services.AddSignalR(c =>
             {
-                c.MaximumReceiveMessageSize = 100 * 1024 * 1024; // 50 mega-bytes
+                c.MaximumReceiveMessageSize = 100000 * 1024 * 1024; // 50 mega-bytes
                 c.StreamBufferCapacity = 50;
                 c.EnableDetailedErrors = true;
             });
