@@ -10,6 +10,7 @@ Simple secure chat room web (+ file transfer) application using SignalR (dotnet 
 - File name is transmitted as plaintext but file blob is transmitted as ciphertext
 - Max file size is `50mb`
 - Session password is store as plaintext via a cookie in your browser
+- Used [LiteDB](https://www.litedb.org/) to playback messages from 10 minutes ago to just joined users
 
 ### Screenshots
 

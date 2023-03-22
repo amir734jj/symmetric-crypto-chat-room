@@ -1,4 +1,5 @@
 ﻿using Domainlogic;
+using LiteDB;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.Extensions.DependencyInjection;
@@ -18,6 +19,9 @@ namespace API
                 c.StreamBufferCapacity = 50;
                 c.EnableDetailedErrors = true;
             });
+
+            services.AddSingleton<ILiteDatabase>(new LiteDatabase("db.litedb"));
+            services.AddSingleton<PlaybackLogic>();
         }
 
         // This method gets called by the runtime. Use this method to configure the HTTP request pipeline.

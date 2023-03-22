@@ -4,6 +4,8 @@ namespace Models
 {
     public class MessagePayload
     {
+        public int Id { get; set; }
+
         public string Name { get; set; }
         
         public string Message { get; set; }
@@ -11,6 +13,8 @@ namespace Models
         public DateTime Date { get; set; }
         
         public FilePayload File { get; set; }
+        
+        public DateTimeOffset Expiration { get; set; }
     }
 
     public class FilePayload
