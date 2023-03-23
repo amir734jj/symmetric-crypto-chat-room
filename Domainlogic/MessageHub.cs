@@ -37,6 +37,7 @@ namespace Domainlogic
         public override async Task OnDisconnectedAsync(Exception ex)
         {
             ConnectedIds.Remove(Context.ConnectionId);
+            Names.Remove(Context.ConnectionId);
 
             await Clients.All.SendAsync("SendAction", "left", ConnectedIds.Count, Names.Values.ToList());
         }
