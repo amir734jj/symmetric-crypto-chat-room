@@ -1,0 +1,89 @@
+@page "/Chat"
+@using Microsoft.AspNetCore.Authorization
+@using Microsoft.AspNetCore.Components.Forms
+@using Models
+@inject SignalRClientState SignalRClientState
+@inject NavigationManager Navigation
+@inject ILogger<Chat> Logger
+@attribute [Authorize]
+@implements IDisposable
+
+<h3>Chat</h3>
+
+<HxButton Color="ThemeColor.Danger" OnClick="@(LogoutHandler)"> Logout </HxButton>
+
+<EditForm Model="@_messagePayload" OnValidSubmit="@(ValidFormSubmitted)" OnInvalidSubmit="@(InvalidFormSubmitted)">
+    <DataAnnotationsValidator/>
+
+    <HxFormState>
+        <HxInputTextArea Label="Password" @bind-Value="@_messagePayload.Message" Placeholder="Enter password here" Hint="Password (at least 6 alphanumeric characters long)" Type="InputType.Password"/>
+
+        <HxSubmit Color="ThemeColor.Primary" Enabled="true">Send</HxSubmit>
+    </HxFormState>
+
+</EditForm>
+
+@foreach (var message in SignalRClientState.Messages)
+{
+    <HxCard>
+        <HeaderTemplate>
+            From: <label> @(message.Name) </label> <label class="pull-right"> Sent on: @(message.Date.ToLongDateString()) </label>
+        </HeaderTemplate>
+        <BodyTemplate>
+            <HxCardTitle>@(message.Name)</HxCardTitle>
+            <HxCardText>@(message.Message)</HxCardText>
+        </BodyTemplate>
+    </HxCard>
+}
+
+@code {
+    private string? _name;
+
+    private readonly MessagePayload _messagePayload = new();
+
+    protected override void OnInitialized()
+    {
+        _name =  SignalRClientState.UserInfo?.Name;
+
+        SignalRClientState.OnChange += OnChangeHandler;
+    }
+
+    private void LogoutHandler()
+    {
+        SignalRClientState.Logout();
+        
+        Navigation.NavigateTo("/");
+    }
+    
+    async Task ValidFormSubmitted(EditContext editContext)
+    {
+        try
+        {
+            await SignalRClientState.Send(_messagePayload);
+        }
+        catch (Exception e)
+        {
+            Logger.LogError(e, "Failed to send");
+        }
+    }
+
+    void InvalidFormSubmitted(EditContext editContext)
+    {
+        Logger.LogError("Form validation failed because of {}", editContext.GetValidationMessages());
+    }
+
+    private void OnChangeHandler(object? _, EventArgs args)
+    {
+        StateHasChanged();
+    }
+    
+    void IDisposable.Dispose()
+    {
+        if (SignalRClientState?.OnChange != null)
+        {
+#pragma warning disable CS8601
+            SignalRClientState.OnChange -= OnChangeHandler;
+#pragma warning restore CS8601
+        }
+    }
+}
