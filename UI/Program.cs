@@ -1,4 +1,5 @@
 using Blazor.Extensions.Logging;
+using BlazorDownloadFile;
 using Blazored.SessionStorage;
 using Havit.Blazor.Components.Web;
 using Microsoft.AspNetCore.Components.Authorization;
@@ -28,10 +29,12 @@ builder.Services.AddSingleton(new HubConnectionBuilder()
 
 builder.Services.AddBlazoredSessionStorageAsSingleton();
 
+builder.Services.AddSingleton<PayloadEncryptionService>();
 builder.Services.AddSingleton<SignalRClientState>();
 builder.Services.AddScoped<AuthenticationStateProvider, SignalRClientState>();
 
 builder.Services.AddHxServices();
+builder.Services.AddBlazorDownloadFile();
 
 builder.Services.AddLogging(x => x.AddBrowserConsole()
     .SetMinimumLevel(LogLevel.Trace));

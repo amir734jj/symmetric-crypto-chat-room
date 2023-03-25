@@ -9,7 +9,7 @@ namespace UI;
 
 public class SignalRClientState : AuthenticationStateProvider
 {
-    public List<MessagePayload> Messages { get; }
+    public LinkedList<(MessagePayload messagePayload, bool valid)> Messages { get; }
 
     public int Count { get; set; }
 
@@ -23,15 +23,22 @@ public class SignalRClientState : AuthenticationStateProvider
 
     private readonly ISyncSessionStorageService _sessionStorageService;
     
+    private readonly PayloadEncryptionService _payloadEncryptionService;
+
     private readonly ILogger<SignalRClientState> _logger;
 
-    public SignalRClientState(HubConnection hubConnection, ISyncSessionStorageService sessionStorageService, ILogger<SignalRClientState> logger)
+    public SignalRClientState(
+        HubConnection hubConnection,
+        ISyncSessionStorageService sessionStorageService,
+        PayloadEncryptionService payloadEncryptionService,
+        ILogger<SignalRClientState> logger)
     {
         _hubConnection = hubConnection;
         _sessionStorageService = sessionStorageService;
+        _payloadEncryptionService = payloadEncryptionService;
         _logger = logger;
 
-        Messages = new List<MessagePayload>();
+        Messages = new LinkedList<(MessagePayload messagePayload, bool valid)>();
         Names = new List<string>();
         Count = 0;
         UserInfo = null;
@@ -59,17 +66,17 @@ public class SignalRClientState : AuthenticationStateProvider
 
     private void SendActionHandler(string _, int count, List<string> names)
     {
-        OnChange.Invoke(this, EventArgs.Empty);
-
         Count = count;
         Names = names;
+        
+        OnChange.Invoke(this, EventArgs.Empty);
     }
 
-    private void SendMessageHandler(MessagePayload message)
+    private void SendMessageHandler(MessagePayload payload)
     {
-        OnChange.Invoke(this, EventArgs.Empty);
+        Messages.AddFirst((_payloadEncryptionService.DecryptPayload(UserInfo!.Password, payload), _payloadEncryptionService.PayloadIsValid(payload)));
         
-        Messages.Add(message);
+        OnChange.Invoke(this, EventArgs.Empty);
     }
 
     public async Task Login(LoginViewModel? login)
@@ -78,9 +85,9 @@ public class SignalRClientState : AuthenticationStateProvider
         
         _sessionStorageService.SetItem("IDENTITY", login);
         
-        NotifyAuthenticationStateChanged(GetAuthenticationStateAsync());
-
         await _hubConnection.SendAsync("WhoAmi", login!.Name);
+        
+        NotifyAuthenticationStateChanged(GetAuthenticationStateAsync());
     }
 
     public bool IsLoggedIn()
@@ -97,7 +104,7 @@ public class SignalRClientState : AuthenticationStateProvider
 
     public async Task Send(MessagePayload messagePayload)
     {
-        await _hubConnection.SendAsync("Send", messagePayload);
+        await _hubConnection.SendAsync("Send", _payloadEncryptionService.EncryptPayload(UserInfo!.Password, messagePayload));
     }
 
     public override Task<AuthenticationState> GetAuthenticationStateAsync()
