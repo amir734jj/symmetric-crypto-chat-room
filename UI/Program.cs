@@ -13,7 +13,9 @@ var builder = WebAssemblyHostBuilder.CreateDefault(args);
 builder.RootComponents.Add<App>("#app");
 builder.RootComponents.Add<HeadOutlet>("head::after");
 
-var serverlessBaseUri = builder.Configuration["ServerlessBaseURI"]!;
+var serverlessBaseUri = string.IsNullOrEmpty(builder.Configuration["ServerlessBaseURI"])
+    ? builder.Configuration["ServerlessBaseURI"]!
+    : builder.HostEnvironment.BaseAddress;
 
 builder.Services.AddOptions();
 builder.Services.AddAuthorizationCore();

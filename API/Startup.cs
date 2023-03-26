@@ -68,11 +68,11 @@ public class Startup
         }
 
         app.UseDefaultFiles()
-            .UseStaticFiles()
-            .UseRouting()
-            .UseEndpoints(endpoints =>
+            .UseStaticFiles(new StaticFileOptions
             {
-                endpoints.MapHub<MessageHub>("/chat");
-            });
+                ServeUnknownFileTypes = true
+            })
+            .UseRouting()
+            .UseEndpoints(endpoints => { endpoints.MapHub<MessageHub>("/chat"); });
     }
 }
