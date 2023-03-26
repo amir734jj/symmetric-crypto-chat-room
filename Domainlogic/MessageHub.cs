@@ -30,16 +30,16 @@ namespace Domainlogic
             {
                 await Clients.Client(Context.ConnectionId).SendAsync("SendMessage", messagePayload);
             }
-
-            await Clients.All.SendAsync("SendAction", MessageTypeEnum.Joined.ToString(), ConnectedIds.Count, Names.Values.ToList());
+            
+            await NotifyAll(MessageTypeEnum.Joined);
         }
 
         public override async Task OnDisconnectedAsync(Exception ex)
         {
             ConnectedIds.Remove(Context.ConnectionId);
             Names.Remove(Context.ConnectionId);
-
-            await Clients.All.SendAsync("SendAction", MessageTypeEnum.Left.ToString(), ConnectedIds.Count, Names.Values.ToList());
+            
+            await NotifyAll(MessageTypeEnum.Left);
         }
 
         public async Task Send(MessagePayload message)
@@ -49,9 +49,16 @@ namespace Domainlogic
             await Clients.All.SendAsync("SendMessage", message);
         }
         
-        public void WhoAmi(string name)
+        public async Task WhoAmi(string name)
         {
             Names[Context.ConnectionId] = name;
+
+            await NotifyAll(MessageTypeEnum.Status);
+        }
+
+        private async Task NotifyAll(MessageTypeEnum type)
+        {
+            await Clients.All.SendAsync("SendAction", type.ToString(), ConnectedIds.Count, Names.Values.ToList());
         }
     }
 }

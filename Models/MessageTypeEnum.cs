@@ -2,6 +2,6 @@ namespace Models
 {
     public enum MessageTypeEnum
     {
-        Joined, Left
+        Joined, Left, Status
     }
 }
