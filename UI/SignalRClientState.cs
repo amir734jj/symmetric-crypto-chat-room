@@ -17,7 +17,7 @@ public class SignalRClientState : AuthenticationStateProvider
 
     public LoginViewModel? UserInfo { get; set; }
 
-    public EventHandler OnChange { get; set; }
+    public EventHandler? OnChange { get; set; }
 
     private readonly HubConnection _hubConnection;
 
@@ -27,6 +27,21 @@ public class SignalRClientState : AuthenticationStateProvider
 
     private readonly ILogger<SignalRClientState> _logger;
 
+    // ReSharper disable once InconsistentNaming
+    private const string SESSION_KEY = "SYMMETRIC_CRYPTO_SESSION_KEY";
+
+    /// <summary>
+    /// This is needed because calling async initialize in constructor is not supported in blazor
+    /// And IsLoggedIn prematurely says user is not logged in. This way we make sure we get is
+    /// logged in result when initialize has finished.
+    /// </summary>
+    private State _state;
+
+    private enum State
+    {
+        Uninitialized, Initialized, Initializing, Failed
+    }
+    
     public SignalRClientState(
         HubConnection hubConnection,
         ISyncSessionStorageService sessionStorageService,
@@ -43,25 +58,53 @@ public class SignalRClientState : AuthenticationStateProvider
         Count = 0;
         UserInfo = null;
 
-        Initialize();
+        _state = State.Uninitialized;
     }
 
-    private async Task Initialize()
+    public async Task Initialize()
     {
-        _hubConnection.On("SendAction", new Action<string, int, List<string>>(SendActionHandler));
-        _hubConnection.On("SendMessage", new Action<MessagePayload>(SendMessageHandler));
-
-        await _hubConnection.StartAsync();
-
-        if (_sessionStorageService.ContainKey("IDENTITY"))
+        // Short circuit if already initialized
+        if (_state is State.Initializing or State.Initialized)
         {
-            await Login(_sessionStorageService.GetItem<LoginViewModel>("IDENTITY"));
+            _logger.LogTrace("SignalRClientState cannot be initialized with current state: {}.", _state);
+            
+            // Until while initializing
+            while (_state == State.Initializing) 
+            {
+                await Task.Delay(1);
+            }
+            
+            return;
         }
+        
+        _state = State.Initializing;
 
-        OnChange += (_, _) =>
+        _logger.LogTrace("Initializing SignalRClientState.");
+
+        try
         {
-            _logger.LogTrace("Change occured");
-        };
+            _hubConnection.On("SendAction", new Action<string, int, List<string>>(SendActionHandler));
+            _hubConnection.On("SendMessage", new Action<MessagePayload>(SendMessageHandler));
+
+            await _hubConnection.StartAsync();
+
+            if (_sessionStorageService.ContainKey(SESSION_KEY))
+            {
+                await Login(_sessionStorageService.GetItem<LoginViewModel>(SESSION_KEY));
+            }
+
+            OnChange += (_, _) => { _logger.LogTrace("SignalR client session change occured."); };
+
+            _logger.LogTrace("Successfully initialized SignalRClientState.");
+
+            _state = State.Initialized;
+        }
+        catch (Exception e)
+        {
+            _logger.LogError(e, "Failed to initialize SignalRClientState");
+
+            _state = State.Failed;
+        }
     }
 
     private void SendActionHandler(string _, int count, List<string> names)
@@ -69,21 +112,35 @@ public class SignalRClientState : AuthenticationStateProvider
         Count = count;
         Names = names;
         
-        OnChange.Invoke(this, EventArgs.Empty);
+        OnChange?.Invoke(this, EventArgs.Empty);
     }
 
     private void SendMessageHandler(MessagePayload payload)
     {
-        Messages.AddFirst((_payloadEncryptionService.DecryptPayload(UserInfo!.Password, payload), _payloadEncryptionService.PayloadIsValid(payload)));
+        var isValid = _payloadEncryptionService.PayloadIsValid(UserInfo!.Password, payload.Token);
         
-        OnChange.Invoke(this, EventArgs.Empty);
+        // If message is valid then decrypt, otherwise don't bother
+        if (isValid)
+        {
+            payload = _payloadEncryptionService.DecryptPayload(UserInfo!.Password, payload);
+        }
+
+        Messages.AddFirst((payload, isValid));
+
+        // To make sure it list doesn't get too large and consume a lot of memory
+        if (Messages.Count > 15)
+        {
+            Messages.RemoveLast();
+        }
+        
+        OnChange?.Invoke(this, EventArgs.Empty);
     }
 
     public async Task Login(LoginViewModel? login)
     {
         UserInfo = login;
         
-        _sessionStorageService.SetItem("IDENTITY", login);
+        _sessionStorageService.SetItem(SESSION_KEY, login);
         
         await _hubConnection.SendAsync("WhoAmi", login!.Name);
         

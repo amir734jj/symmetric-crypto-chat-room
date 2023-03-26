@@ -40,7 +40,7 @@ public class Startup
             
         services.AddSignalR(c =>
         {
-            c.MaximumReceiveMessageSize = 1000 * 1024 * 1024; // 50 mega-bytes
+            c.MaximumReceiveMessageSize = 1024 * 1024 * 1024; // 50 mega-bytes
             c.StreamBufferCapacity = 50;
             c.EnableDetailedErrors = true;
         });

@@ -34,6 +34,11 @@
 @code {
     readonly LoginViewModel _model = new();
 
+    protected override async Task OnInitializedAsync()
+    {
+        await SignalRClientState.Initialize();
+    }
+
     async Task ValidFormSubmitted(EditContext editContext)
     {
         try

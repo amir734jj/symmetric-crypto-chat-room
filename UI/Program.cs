@@ -29,6 +29,8 @@ builder.Services.AddSingleton(new HubConnectionBuilder()
 
 builder.Services.AddBlazoredSessionStorageAsSingleton();
 
+builder.Services.AddSingleton<HashingUtility>();
+builder.Services.AddSingleton<SymmetricCryptography>();
 builder.Services.AddSingleton<PayloadEncryptionService>();
 builder.Services.AddSingleton<SignalRClientState>();
 builder.Services.AddScoped<AuthenticationStateProvider, SignalRClientState>();

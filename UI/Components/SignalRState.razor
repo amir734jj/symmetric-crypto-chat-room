@@ -1,13 +1,8 @@
-﻿@page "/"
-@inject NavigationManager Navigation
 @inject SignalRClientState SignalRClientState
 
-@code
-{
+@code {
     protected override async Task OnInitializedAsync()
     {
         await SignalRClientState.Initialize();
-        
-        Navigation.NavigateTo(SignalRClientState.IsLoggedIn() ? "/chat" : "/login");
     }
 }

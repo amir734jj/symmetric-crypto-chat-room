@@ -17,6 +17,8 @@ namespace Models
         public FilePayload File { get; set; }
         
         public DateTimeOffset Expiration { get; set; }
+        
+        public string Token { get; set; }
     }
 
     public class FilePayload

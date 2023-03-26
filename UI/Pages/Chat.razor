@@ -70,7 +70,13 @@
                     <label class="me-2">
                         From: @(message.Name)
                     </label>
-                    @if (!valid)
+                    @if (valid)
+                    {
+                        <label claass="mx-2">
+                            <HxBadge Color="ThemeColor.Success">Valid</HxBadge>
+                        </label>
+                    }
+                    else
                     {
                         <label claass="mx-2">
                             <HxBadge Color="ThemeColor.Danger">Invalid</HxBadge>
@@ -87,7 +93,14 @@
                 @if (message.File != null)
                 {
                     <HxCardTitle>
-                        <HxButton Color="ThemeColor.Secondary" OnClick="@(() => Download(message.File))" Enabled="valid"> Download </HxButton>
+                        @if (valid)
+                        {
+                            <HxButton Color="ThemeColor.Secondary" OnClick="@(() => Download(message.File))" Enabled="true"> Download </HxButton>
+                        }
+                        else
+                        {
+                            <HxButton Color="ThemeColor.Secondary" Enabled="false"> Download </HxButton>
+                        }
                     </HxCardTitle>
                 }
 
@@ -113,8 +126,15 @@
 
     private MessagePayload _messagePayload = new();
 
-    protected override void OnInitialized()
+    protected override async Task OnInitializedAsync()
     {
+        await SignalRClientState.Initialize();
+
+        if (!SignalRClientState.IsLoggedIn())
+        {
+            Navigation.NavigateTo("/");
+        }
+        
         SignalRClientState.OnChange += OnChangeHandler;
     }
 
@@ -142,6 +162,9 @@
 
     async Task ValidFormSubmitted(EditContext editContext)
     {
+        // Just making sure.
+        if (SignalRClientState.UserInfo == null) return;
+        
         try
         {
             _messagePayload.Date = DateTime.Now;
@@ -158,7 +181,7 @@
 
             await SignalRClientState.Send(_messagePayload);
 
-    // Reset the payload
+            // Reset the payload
             _messagePayload = new MessagePayload();
         }
         catch (Exception e)
