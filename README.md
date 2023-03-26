@@ -1,4 +1,6 @@
-## SymmetricCryptoChatRoom ([Heroku Url](https://symmetric-crypto-chat-room.herokuapp.com/))
+## SymmetricCryptoChatRoom ([URL](http://hesamian.myddns.me:5000/))
+
+[![Docker Hub badge][dockerhub-badge]][dockerhub]
 
 Simple secure chat room web (+ file transfer) application using SignalR (dotnet core) and Angular.js for front-end and most importantly:
 - `SHA-256` to hash the given password
@@ -17,3 +19,6 @@ Simple secure chat room web (+ file transfer) application using SignalR (dotnet 
 ![Login](screenshots/blazor/login.png)
 --
 ![Board](screenshots/blazor/board.png)
+
+[dockerhub-badge]: https://img.shields.io/docker/pulls/amir734jj/symmetric-crypto-chatroom
+[dockerhub]: https://hub.docker.com/repository/docker/amir734jj/symmetric-crypto-chatroom
