@@ -21,10 +21,7 @@ builder.Services.AddOptions();
 builder.Services.AddAuthorizationCore();
 
 builder.Services.AddSingleton(new HubConnectionBuilder()
-    .WithUrl(new Uri(new Uri(serverlessBaseUri), "chat"), opt =>
-    {
-        opt.Transports = HttpTransportType.LongPolling;
-    })
+    .WithUrl(new Uri(new Uri(serverlessBaseUri), "chat"))
     .WithAutomaticReconnect()
     .AddJsonProtocol()
     .Build());
