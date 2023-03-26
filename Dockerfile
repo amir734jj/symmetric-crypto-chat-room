@@ -15,6 +15,8 @@ WORKDIR "/app/UI"
 
 RUN dotnet publish -c Release -o out
 
+RUN rm -rf /app/API/out/wwwroot
+
 RUN cp -rf /app/UI/out/wwwroot /app/API/out
 
 # Build runtime image
