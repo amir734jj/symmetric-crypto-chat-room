@@ -1,4 +1,5 @@
 ﻿using System;
+using System.ComponentModel.DataAnnotations;
 
 namespace Models
 {
@@ -8,6 +9,7 @@ namespace Models
 
         public string Name { get; set; }
         
+        [Required]
         public string Message { get; set; }
         
         public DateTime Date { get; set; }
@@ -15,6 +17,8 @@ namespace Models
         public FilePayload File { get; set; }
         
         public DateTimeOffset Expiration { get; set; }
+        
+        public string Token { get; set; }
     }
 
     public class FilePayload
@@ -22,5 +26,7 @@ namespace Models
         public string Data { get; set; }
         
         public string Name { get; set; }
+        
+        public string ContentType { get; set; }
     }
 }

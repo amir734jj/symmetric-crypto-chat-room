@@ -1,0 +1,60 @@
+@page "/Login"
+@using Microsoft.AspNetCore.Components
+@using Models.ViewModels
+@using Microsoft.AspNetCore.Authorization
+@using Microsoft.AspNetCore.Components.Forms
+@inject SignalRClientState SignalRClientState
+@inject NavigationManager Navigation
+@inject ILogger<Login> Logger
+@attribute [AllowAnonymous]
+
+<PageTitle>Login </PageTitle>
+
+<div class="mt-3">
+    <h3>Login to secure chatroom</h3>
+    <p>
+        Your <code>password</code> is not shared, both encryption and decryption (<code>AES-256-CTR</code> with
+        <code>SHA-256</code> hash) is all done in client-slide
+    </p>
+    
+    <EditForm Model="@_model" OnValidSubmit="@(ValidFormSubmitted)" OnInvalidSubmit="@(InvalidFormSubmitted)">
+        <DataAnnotationsValidator/>
+    
+        <HxFormState>
+            <HxInputText Label="Name" @bind-Value="@_model.Name" Placeholder="Enter name here" Hint="Name you want to use in the chat"/>
+    
+            <HxInputText Label="Password" @bind-Value="@_model.Password" Placeholder="Enter password here" Hint="Password (at least 6 alphanumeric characters long)" Type="InputType.Password"/>
+    
+            <HxSubmit Color="ThemeColor.Primary" Enabled="true">Login</HxSubmit>
+        </HxFormState>
+    
+    </EditForm>
+</div>
+
+@code {
+    readonly LoginViewModel _model = new();
+
+    protected override async Task OnInitializedAsync()
+    {
+        await SignalRClientState.Initialize();
+    }
+
+    async Task ValidFormSubmitted(EditContext editContext)
+    {
+        try
+        {
+            await SignalRClientState.Login(_model);
+
+            Navigation.NavigateTo("/");
+        }
+        catch (Exception e)
+        {
+            Logger.LogError(e, "Failed to login");
+        }
+    }
+
+    void InvalidFormSubmitted(EditContext editContext)
+    {
+        Logger.LogError("Form validation failed because of {}", editContext.GetValidationMessages());
+    }
+}

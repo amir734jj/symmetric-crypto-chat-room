@@ -31,7 +31,7 @@ namespace Domainlogic
                 await Clients.Client(Context.ConnectionId).SendAsync("SendMessage", messagePayload);
             }
 
-            await Clients.All.SendAsync("SendAction", "joined", ConnectedIds.Count, Names.Values.ToList());
+            await Clients.All.SendAsync("SendAction", MessageTypeEnum.Joined.ToString(), ConnectedIds.Count, Names.Values.ToList());
         }
 
         public override async Task OnDisconnectedAsync(Exception ex)
@@ -39,7 +39,7 @@ namespace Domainlogic
             ConnectedIds.Remove(Context.ConnectionId);
             Names.Remove(Context.ConnectionId);
 
-            await Clients.All.SendAsync("SendAction", "left", ConnectedIds.Count, Names.Values.ToList());
+            await Clients.All.SendAsync("SendAction", MessageTypeEnum.Left.ToString(), ConnectedIds.Count, Names.Values.ToList());
         }
 
         public async Task Send(MessagePayload message)

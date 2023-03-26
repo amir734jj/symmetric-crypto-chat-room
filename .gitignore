@@ -1,3 +1,4 @@
+*.litedb
 
 # Created by https://www.toptal.com/developers/gitignore/api/dotnetcore,jetbrains,rider
 # Edit at https://www.toptal.com/developers/gitignore?templates=dotnetcore,jetbrains,rider

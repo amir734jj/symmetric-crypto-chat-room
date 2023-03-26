@@ -2,44 +2,70 @@
 using LiteDB;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Hosting;
+using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 
-namespace API
+namespace API;
+
+public class Startup
 {
-    public class Startup
+    private readonly IConfigurationRoot _configuration;
+
+    private readonly IWebHostEnvironment _env;
+
+    public Startup(IWebHostEnvironment env)
     {
-        // This method gets called by the runtime. Use this method to add services to the container.
-        // For more information on how to configure your application, visit https://go.microsoft.com/fwlink/?LinkID=398940
-        public void ConfigureServices(IServiceCollection services)
-        {
-            services.AddSignalR(c =>
-            {
-                c.MaximumReceiveMessageSize = 1000 * 1024 * 1024; // 50 mega-bytes
-                c.StreamBufferCapacity = 50;
-                c.EnableDetailedErrors = true;
-            });
+        _env = env;
 
-            services.AddSingleton<ILiteDatabase>(new LiteDatabase("db.litedb"));
-            services.AddSingleton<PlaybackLogic>();
+        var builder = new ConfigurationBuilder()
+            .SetBasePath(env.ContentRootPath)
+            .AddJsonFile("appsettings.json", true, true)
+            .AddJsonFile($"appsettings.{env.EnvironmentName}.json", true)
+            .AddJsonFile("secureHeaderSettings.json", true, true)
+            .AddEnvironmentVariables();
+
+        _configuration = builder.Build();
+    }
+        
+    // This method gets called by the runtime. Use this method to add services to the container.
+    // For more information on how to configure your application, visit https://go.microsoft.com/fwlink/?LinkID=398940
+    public void ConfigureServices(IServiceCollection services)
+    {
+        services.AddCors(options => options.AddPolicy("CorsPolicy", builder => builder
+            .WithOrigins(_configuration.GetSection("TrustedSpaUrls").Get<string[]>())
+            .AllowAnyHeader()
+            .AllowAnyMethod()
+            .AllowCredentials()));
+            
+        services.AddSignalR(c =>
+        {
+            c.MaximumReceiveMessageSize = 1024 * 1024 * 1024; // 50 mega-bytes
+            c.StreamBufferCapacity = 50;
+            c.EnableDetailedErrors = true;
+        });
+
+        services.AddSingleton<ILiteDatabase>(new LiteDatabase("db.litedb"));
+        services.AddSingleton<PlaybackLogic>();
+    }
+
+    // This method gets called by the runtime. Use this method to configure the HTTP request pipeline.
+    public void Configure(IApplicationBuilder app, IWebHostEnvironment env)
+    {
+        if (env.IsDevelopment())
+        {
+            app.UseDeveloperExceptionPage();
+                
+            app.UseCors("CorsPolicy");
         }
 
-        // This method gets called by the runtime. Use this method to configure the HTTP request pipeline.
-        public void Configure(IApplicationBuilder app, IWebHostEnvironment env)
+        app.UseFileServer();
+
+        app.UseRouting();
+
+        app.UseEndpoints(c =>
         {
-            if (env.IsDevelopment())
-            {
-                app.UseDeveloperExceptionPage();
-            }
-
-            app.UseFileServer();
-
-            app.UseRouting();
-
-            app.UseEndpoints(c =>
-            {
-                c.MapHub<MessageHub>("/chat");
-            });
-        }
+            c.MapHub<MessageHub>("/chat");
+        });
     }
 }
