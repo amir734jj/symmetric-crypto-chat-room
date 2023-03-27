@@ -138,7 +138,7 @@ angular.module("chatApp", [])
     var init = () => {
       $scope.messages = [];
       var conn = new signalR.HubConnectionBuilder()
-          .withUrl("./chat")
+          .withUrl("./signalr")
           .withAutomaticReconnect()
           .build();
 

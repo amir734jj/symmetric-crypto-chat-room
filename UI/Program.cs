@@ -5,7 +5,6 @@ using Havit.Blazor.Components.Web;
 using Microsoft.AspNetCore.Components.Authorization;
 using Microsoft.AspNetCore.Components.Web;
 using Microsoft.AspNetCore.Components.WebAssembly.Hosting;
-using Microsoft.AspNetCore.Http.Connections;
 using Microsoft.AspNetCore.SignalR.Client;
 using UI;
 
@@ -21,7 +20,7 @@ builder.Services.AddOptions();
 builder.Services.AddAuthorizationCore();
 
 builder.Services.AddSingleton(new HubConnectionBuilder()
-    .WithUrl(new Uri(new Uri(serverlessBaseUri), "chat"))
+    .WithUrl(new Uri(new Uri(serverlessBaseUri), "signalr"))
     .WithAutomaticReconnect()
     .AddJsonProtocol()
     .Build());

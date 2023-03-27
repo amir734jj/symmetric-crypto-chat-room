@@ -72,7 +72,10 @@ public class Startup
             {
                 ServeUnknownFileTypes = true
             })
-            .UseRouting()
-            .UseEndpoints(endpoints => { endpoints.MapHub<MessageHub>("/chat"); });
+            .UseSpa(opt =>
+            {
+                opt.ApplicationBuilder.UseRouting()
+                    .UseEndpoints(endpoints => { endpoints.MapHub<MessageHub>("/signalr"); });
+            });
     }
 }

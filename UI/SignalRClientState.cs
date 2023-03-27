@@ -156,6 +156,8 @@ public class SignalRClientState : AuthenticationStateProvider
     {
         UserInfo = null;
         
+        _sessionStorageService.RemoveItem(SESSION_KEY);
+
         NotifyAuthenticationStateChanged(GetAuthenticationStateAsync());
     }
 
