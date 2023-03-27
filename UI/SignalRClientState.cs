@@ -35,9 +35,9 @@ public class SignalRClientState : AuthenticationStateProvider
     /// And IsLoggedIn prematurely says user is not logged in. This way we make sure we get is
     /// logged in result when initialize has finished.
     /// </summary>
-    private State _state;
+    public SignalRStateEnum State { get; private set; }
 
-    private enum State
+    public enum SignalRStateEnum
     {
         Uninitialized, Initialized, Initializing, Failed
     }
@@ -58,18 +58,18 @@ public class SignalRClientState : AuthenticationStateProvider
         Count = 0;
         UserInfo = null;
 
-        _state = State.Uninitialized;
+        State = SignalRStateEnum.Uninitialized;
     }
 
     public async Task Initialize()
     {
         // Short circuit if already initialized
-        if (_state is State.Initializing or State.Initialized)
+        if (State is SignalRStateEnum.Initializing or SignalRStateEnum.Initialized)
         {
-            _logger.LogTrace("SignalRClientState cannot be initialized with current state: {}.", _state);
+            _logger.LogTrace("SignalRClientState cannot be initialized with current state: {}.", State);
             
             // Until while initializing
-            while (_state == State.Initializing) 
+            while (State == SignalRStateEnum.Initializing) 
             {
                 await Task.Delay(1);
             }
@@ -77,7 +77,7 @@ public class SignalRClientState : AuthenticationStateProvider
             return;
         }
         
-        _state = State.Initializing;
+        State = SignalRStateEnum.Initializing;
 
         _logger.LogTrace("Initializing SignalRClientState.");
 
@@ -97,13 +97,13 @@ public class SignalRClientState : AuthenticationStateProvider
 
             _logger.LogTrace("Successfully initialized SignalRClientState.");
 
-            _state = State.Initialized;
+            State = SignalRStateEnum.Initialized;
         }
         catch (Exception e)
         {
             _logger.LogError(e, "Failed to initialize SignalRClientState");
 
-            _state = State.Failed;
+            State = SignalRStateEnum.Failed;
         }
     }
 

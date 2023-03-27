@@ -1,5 +1,10 @@
 @inject SignalRClientState SignalRClientState
 
+@if (SignalRClientState.State != SignalRClientState.SignalRStateEnum.Initialized)
+{
+    <HxSpinner />
+}
+
 @code {
     protected override async Task OnInitializedAsync()
     {
