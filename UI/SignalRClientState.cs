@@ -105,6 +105,8 @@ public class SignalRClientState : AuthenticationStateProvider
 
             State = SignalRStateEnum.Failed;
         }
+        
+        OnChange?.Invoke(this, EventArgs.Empty);
     }
 
     private void SendActionHandler(string _, int count, List<string> names)

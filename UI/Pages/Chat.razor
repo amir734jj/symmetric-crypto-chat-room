@@ -24,7 +24,7 @@
     <div class="row">
         <div class="col-sm-5 offset-sm-7">
             <div class="float-end">
-                <HxButton Color="ThemeColor.Danger" OnClick="@(LogoutHandler)"> Logout </HxButton>
+                <HxButton Color="ThemeColor.Danger" Size="ButtonSize.Small" OnClick="@(LogoutHandler)"> Logout </HxButton>
             </div>
         </div>
     </div>
@@ -37,9 +37,9 @@
         <HxFormState>
             <HxInputTextArea Label="Message" @bind-Value="@_messagePayload.Message" Placeholder="Enter message here" Type="InputType.Text"/>
 
-            <HxInputFile @ref="_component" Label="File" OnChange="@(OnFileChange)"/>
+            <HxInputFile @ref="_component" Label="File" OnChange="@(OnFileChange)" Multiple="@(true)"/>
 
-            @if (_component != null && _messagePayload.File != null)
+            @if (_component != null && _messagePayload.Files != null && _messagePayload.Files.Any())
             {
                 <HxButton Text="Clear" CssClass="mt-3" OnClick="@(async () => await ClearFileInput())" Color="ThemeColor.Secondary"/>
             }
@@ -85,23 +85,29 @@
                 </div>
                 <div class="float-end">
                     <label class="ms-2">
-                        Sent on: @(message.Date.ToLongTimeString()) 
+                        Sent on: @(message.Date.ToLongTimeString())
                     </label>
                 </div>
             </HeaderTemplate>
             <BodyTemplate>
-                @if (message.File != null)
+                @foreach (var file in message.Files)
                 {
-                    <HxCardTitle>
+                    <p>
                         @if (valid)
                         {
-                            <HxButton Color="ThemeColor.Secondary" OnClick="@(() => Download(message.File))" Enabled="true"> Download </HxButton>
+                            <HxButton Size="ButtonSize.Small" Color="ThemeColor.Secondary" OnClick="@(() => Download(file))" Enabled="true"> Download </HxButton>
                         }
                         else
                         {
-                            <HxButton Color="ThemeColor.Secondary" Enabled="false"> Download </HxButton>
+                            <HxButton Size="ButtonSize.Small" Color="ThemeColor.Secondary" Enabled="false"> Download </HxButton>
                         }
-                    </HxCardTitle>
+
+                        <label class="ms-2">
+
+
+                            @file.Name
+                        </label>
+                    </p>
                 }
 
                 @if (valid)
@@ -134,7 +140,7 @@
         {
             Navigation.NavigateTo("/");
         }
-        
+
         SignalRClientState.OnChange += OnChangeHandler;
     }
 
@@ -150,34 +156,28 @@
         await BlazorDownloadFileService.DownloadFile(filePayload.Name, filePayload.Data, filePayload.ContentType);
     }
 
-    private async Task OnFileChange(InputFileChangeEventArgs file)
+    private async Task OnFileChange(InputFileChangeEventArgs eventArgs)
     {
-        _messagePayload.File = new FilePayload
+        foreach (var file in eventArgs.GetMultipleFiles())
         {
-            Name = file.File.Name,
-            ContentType = file.File.ContentType,
-            Data = await file.File.OpenReadStream(int.MaxValue).ConvertToBase64(),
-        };
+            _messagePayload.Files.Add(new FilePayload
+            {
+                Name = file.Name,
+                ContentType = file.ContentType,
+                Data = await file.OpenReadStream(int.MaxValue).ConvertToBase64(),
+            });
+        }
     }
 
     async Task ValidFormSubmitted(EditContext editContext)
     {
         // Just making sure.
         if (SignalRClientState.UserInfo == null) return;
-        
+
         try
         {
             _messagePayload.Date = DateTime.Now;
             _messagePayload.Name = SignalRClientState.UserInfo!.Name;
-
-            if (_component != null)
-            {
-                var files = await _component.GetFilesAsync();
-                if (!files.Any())
-                {
-                    _messagePayload.File = null;
-                }
-            }
 
             await SignalRClientState.Send(_messagePayload);
 
@@ -204,7 +204,7 @@
     {
         await _component?.ResetAsync()!;
 
-        _messagePayload.File = null;
+        _messagePayload.Files = new List<FilePayload>();
     }
 
     void IDisposable.Dispose()

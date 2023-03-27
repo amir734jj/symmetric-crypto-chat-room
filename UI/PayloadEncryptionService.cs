@@ -25,9 +25,9 @@ public class PayloadEncryptionService
         payload.Token = _symmetricCryptography.Encrypt(keyMaterial, Convert.ToBase64String(keyMaterial));
         payload.Message = _symmetricCryptography.Encrypt(keyMaterial, payload.Message);
 
-        if (payload.File != null)
+        foreach (var payloadFile in payload.Files)
         {
-            payload.File.Data =  _symmetricCryptography.Encrypt(keyMaterial, payload.File.Data);
+            payloadFile.Data = _symmetricCryptography.Encrypt(keyMaterial, payloadFile.Data);
         }
         
         _logger.LogTrace("Finished payload encryption process");
@@ -43,9 +43,9 @@ public class PayloadEncryptionService
 
         payload.Message = _symmetricCryptography.Decrypt(keyMaterial, payload.Message);
 
-        if (payload.File != null)
+        foreach (var payloadFile in payload.Files)
         {
-            payload.File.Data = _symmetricCryptography.Decrypt(keyMaterial, payload.File.Data);
+            payloadFile.Data = _symmetricCryptography.Decrypt(keyMaterial, payloadFile.Data);
         }
         
         _logger.LogTrace("Finished payload decryption process");
