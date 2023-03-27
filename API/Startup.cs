@@ -1,4 +1,5 @@
-﻿using Domainlogic;
+﻿using ByteSizeLib;
+using Domainlogic;
 using LiteDB;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Hosting;
@@ -48,7 +49,7 @@ public class Startup
         
         services.AddSignalR(c =>
         {
-            c.MaximumReceiveMessageSize = 1024 * 1024 * 1024; // 50 mega-bytes
+            c.MaximumReceiveMessageSize = (long)ByteSize.FromMegaBytes(50).Bytes; // 50 mega-bytes
             c.StreamBufferCapacity = 50;
             c.EnableDetailedErrors = true;
         });

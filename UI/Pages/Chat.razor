@@ -4,6 +4,7 @@
 @using Models
 @using UI.Extensions
 @using BlazorDownloadFile
+@using ByteSizeLib
 @inject SignalRClientState SignalRClientState
 @inject NavigationManager Navigation
 @inject ILogger<Chat> Logger
@@ -37,7 +38,7 @@
         <HxFormState>
             <HxInputTextArea Label="Message" @bind-Value="@_messagePayload.Message" Placeholder="Enter message here" Type="InputType.Text"/>
 
-            <HxInputFile @ref="_component" Label="File" OnChange="@(OnFileChange)" Multiple="@(true)"/>
+            <HxInputFile @ref="_component" Label="File" OnChange="@(OnFileChange)" Multiple="@(true)" MaxFileSize="@((long)ByteSize.FromMegaBytes(25).Bytes)" />
 
             @if (_component != null && _messagePayload.Files != null && _messagePayload.Files.Any())
             {
