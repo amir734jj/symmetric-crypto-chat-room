@@ -3,7 +3,7 @@
 @using Models.ViewModels
 @using Microsoft.AspNetCore.Authorization
 @using Microsoft.AspNetCore.Components.Forms
-@inject SignalRClientState SignalRClientState
+@inject SignalRStateManager SignalRStateManager
 @inject NavigationManager Navigation
 @inject ILogger<Login> Logger
 @attribute [AllowAnonymous]
@@ -34,16 +34,11 @@
 @code {
     readonly LoginViewModel _model = new();
 
-    protected override async Task OnInitializedAsync()
-    {
-        await SignalRClientState.Initialize();
-    }
-
     async Task ValidFormSubmitted(EditContext editContext)
     {
         try
         {
-            await SignalRClientState.Login(_model);
+            await SignalRStateManager.Login(_model);
 
             Navigation.NavigateTo("/");
         }

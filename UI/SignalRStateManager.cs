@@ -1,3 +1,4 @@
+using System.ComponentModel;
 using System.Security.Claims;
 using Blazored.SessionStorage;
 using Microsoft.AspNetCore.Components.Authorization;
@@ -7,77 +8,62 @@ using Models.ViewModels;
 
 namespace UI;
 
-public class SignalRClientState : AuthenticationStateProvider
+public sealed class SignalRStateManager : AuthenticationStateProvider, IDisposable
 {
-    public LinkedList<(MessagePayload messagePayload, bool valid)> Messages { get; }
-
-    public int Count { get; set; }
-
-    public List<string> Names { get; set; }
-
-    public LoginViewModel? UserInfo { get; set; }
-
-    public EventHandler? OnChange { get; set; }
-
     private readonly HubConnection _hubConnection;
 
     private readonly ISyncSessionStorageService _sessionStorageService;
     
     private readonly PayloadEncryptionService _payloadEncryptionService;
 
-    private readonly ILogger<SignalRClientState> _logger;
+    private readonly ILogger<SignalRStateManager> _logger;
 
     // ReSharper disable once InconsistentNaming
     private const string SESSION_KEY = "SYMMETRIC_CRYPTO_SESSION_KEY";
 
-    /// <summary>
-    /// This is needed because calling async initialize in constructor is not supported in blazor
-    /// And IsLoggedIn prematurely says user is not logged in. This way we make sure we get is
-    /// logged in result when initialize has finished.
-    /// </summary>
-    public SignalRStateEnum State { get; private set; }
+    private readonly State _state;
 
-    public enum SignalRStateEnum
-    {
-        Uninitialized, Initialized, Initializing, Failed
-    }
-    
-    public SignalRClientState(
+    private Queue<Action> _queue = new Queue<Action>();
+
+    public SignalRStateManager(
         HubConnection hubConnection,
+        State state,
         ISyncSessionStorageService sessionStorageService,
         PayloadEncryptionService payloadEncryptionService,
-        ILogger<SignalRClientState> logger)
+        ILogger<SignalRStateManager> logger)
     {
         _hubConnection = hubConnection;
         _sessionStorageService = sessionStorageService;
         _payloadEncryptionService = payloadEncryptionService;
         _logger = logger;
 
-        Messages = new LinkedList<(MessagePayload messagePayload, bool valid)>();
-        Names = new List<string>();
-        Count = 0;
-        UserInfo = null;
+        _state = state;
 
-        State = SignalRStateEnum.Uninitialized;
+        _state.PropertyChanged += StateChangedHandler;
     }
 
+    private void StateChangedHandler(object? source, PropertyChangedEventArgs eventArgs)
+    {
+        _logger.LogTrace("State changed: {}", eventArgs.PropertyName);
+    }
+    
     public async Task Initialize()
     {
         // Short circuit if already initialized
-        if (State is SignalRStateEnum.Initializing or SignalRStateEnum.Initialized)
+        if (_state.StateEnum.HasFlag(SignalRStateEnum.Initializing) || _state.StateEnum.HasFlag(SignalRStateEnum.Initialized))
         {
-            _logger.LogTrace("SignalRClientState cannot be initialized with current state: {}", State);
+            _logger.LogTrace("SignalRClientState cannot be initialized with current state: {}", _state.StateEnum);
             
             // Until while initializing
-            while (State == SignalRStateEnum.Initializing) 
+            while (_state.StateEnum == SignalRStateEnum.Initializing) 
             {
                 await Task.Delay(1);
             }
             
             return;
         }
-        
-        State = SignalRStateEnum.Initializing;
+                
+        _state.StateEnum = SignalRStateEnum.Initializing;
 
         _logger.LogTrace("Initializing SignalRClientState");
 
@@ -93,54 +79,55 @@ public class SignalRClientState : AuthenticationStateProvider
                 await Login(_sessionStorageService.GetItem<LoginViewModel>(SESSION_KEY));
             }
 
-            OnChange += (_, _) => { _logger.LogTrace("SignalR client session change occured"); };
-
             _logger.LogTrace("Successfully initialized SignalRClientState");
 
-            State = SignalRStateEnum.Initialized;
+            _state.StateEnum = SignalRStateEnum.Initialized;
         }
         catch (Exception e)
         {
             _logger.LogError(e, "Failed to initialize SignalRClientState");
 
-            State = SignalRStateEnum.Failed;
+            _state.StateEnum = SignalRStateEnum.Failed;
         }
-        
-        OnChange?.Invoke(this, EventArgs.Empty);
     }
 
     private void SendActionHandler(string _, int count, List<string> names)
     {
-        Count = count;
-        Names = names;
-        
-        OnChange?.Invoke(this, EventArgs.Empty);
+        _state.Count = count;
+        _state.Names = names;
     }
 
     private void SendMessageHandler(MessagePayload payload)
     {
-        var isValid = _payloadEncryptionService.PayloadIsValid(UserInfo!.Password, payload.Token);
+        _state.StateEnum |= SignalRStateEnum.Receiving;   
+        
+        var isValid = _payloadEncryptionService.PayloadIsValid(_state.UserInfo!.Password, payload.Token);
         
         // If message is valid then decrypt, otherwise don't bother
         if (isValid)
         {
-            payload = _payloadEncryptionService.DecryptPayload(UserInfo!.Password, payload);
+            payload = _payloadEncryptionService.DecryptPayload(_state.UserInfo!.Password, payload);
         }
 
-        Messages.AddFirst((payload, isValid));
+        _state.Messages.AddFirst((payload, isValid));
 
         // To make sure it list doesn't get too large and consume a lot of memory
-        if (Messages.Count > 15)
+        if (_state.Messages.Count > 15)
         {
-            Messages.RemoveLast();
+            _state.Messages.RemoveLast();
         }
-        
-        OnChange?.Invoke(this, EventArgs.Empty);
+
+        _state.StateEnum &= ~SignalRStateEnum.Receiving;
     }
 
     public async Task Login(LoginViewModel? login)
     {
-        UserInfo = login;
+        while (!_hubConnection.State.HasFlag(HubConnectionState.Connected))
+        {
+            await Task.Delay(1);
+        }
+        
+        _state.UserInfo = login;
         
         _sessionStorageService.SetItem(SESSION_KEY, login);
         
@@ -151,12 +138,12 @@ public class SignalRClientState : AuthenticationStateProvider
 
     public bool IsLoggedIn()
     {
-        return UserInfo != null;
+        return _state.UserInfo != null;
     }
 
     public void Logout()
     {
-        UserInfo = null;
+        _state.UserInfo = null;
         
         _sessionStorageService.RemoveItem(SESSION_KEY);
 
@@ -165,7 +152,16 @@ public class SignalRClientState : AuthenticationStateProvider
 
     public async Task Send(MessagePayload messagePayload)
     {
-        await _hubConnection.SendAsync("Send", _payloadEncryptionService.EncryptPayload(UserInfo!.Password, messagePayload));
+        while (!_hubConnection.State.HasFlag(HubConnectionState.Connected))
+        {
+            await Task.Delay(1);
+        }
+        
+        _state.StateEnum |= SignalRStateEnum.Sending;
+
+        await _hubConnection.SendAsync("Send", _payloadEncryptionService.EncryptPayload(_state.UserInfo!.Password, messagePayload));
+
+        _state.StateEnum &= ~SignalRStateEnum.Sending;
     }
 
     public override Task<AuthenticationState> GetAuthenticationStateAsync()
@@ -175,10 +171,15 @@ public class SignalRClientState : AuthenticationStateProvider
         // ReSharper disable once InvertIf
         if (IsLoggedIn())
         {
-            var claims = new[] { new Claim(ClaimTypes.Name, UserInfo!.Name) };
+            var claims = new[] { new Claim(ClaimTypes.Name, _state.UserInfo!.Name) };
             identity = new ClaimsIdentity(claims, "Server authentication");
         }
 
         return Task.FromResult(new AuthenticationState(new ClaimsPrincipal(identity)));
+    }
+
+    public void Dispose()
+    {
+        _state.PropertyChanged -= StateChangedHandler;
     }
 }

@@ -6,6 +6,7 @@ using Microsoft.AspNetCore.Components.Authorization;
 using Microsoft.AspNetCore.Components.Web;
 using Microsoft.AspNetCore.Components.WebAssembly.Hosting;
 using Microsoft.AspNetCore.SignalR.Client;
+using Models;
 using UI;
 
 var builder = WebAssemblyHostBuilder.CreateDefault(args);
@@ -30,8 +31,9 @@ builder.Services.AddBlazoredSessionStorageAsSingleton();
 builder.Services.AddSingleton<HashingUtility>();
 builder.Services.AddSingleton<SymmetricCryptography>();
 builder.Services.AddSingleton<PayloadEncryptionService>();
-builder.Services.AddSingleton<SignalRClientState>();
-builder.Services.AddScoped<AuthenticationStateProvider, SignalRClientState>();
+builder.Services.AddSingleton<State>();
+builder.Services.AddSingleton<SignalRStateManager>();
+builder.Services.AddScoped<AuthenticationStateProvider, SignalRStateManager>();
 
 builder.Services.AddHxServices();
 builder.Services.AddBlazorDownloadFile();
