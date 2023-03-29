@@ -31,7 +31,7 @@ builder.Services.AddBlazoredSessionStorageAsSingleton();
 builder.Services.AddSingleton<HashingUtility>();
 builder.Services.AddSingleton<SymmetricCryptography>();
 builder.Services.AddSingleton<PayloadEncryptionService>();
-builder.Services.AddSingleton(new State());
+builder.Services.AddSingleton<State>();
 builder.Services.AddSingleton<SignalRStateManager>();
 builder.Services.AddScoped<AuthenticationStateProvider, SignalRStateManager>();
 

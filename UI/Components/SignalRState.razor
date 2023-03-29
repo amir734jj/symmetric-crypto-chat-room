@@ -1,19 +1,19 @@
-@inject State SignalRStateManager
 @using Models
+@using UI.Extensions
+@inject State State
+@inject SignalRStateManager SignalRStateManager
 @implements IDisposable
 
-@if (SignalRStateManager.IsLoading())
+@if (State.StateEnum.IsLoading())
 {
     <div class="mt-3 ms-3">
-        <HxSpinner /> @(SignalRStateManager.State.ToString())
+        <HxSpinner /> @(State.StateEnum.ToString())
     </div>
 }
 
 @code {
     protected override async Task OnInitializedAsync()
     {
-        SignalRStateManager.OnChange += OnChangeHandler;
-        
         await SignalRStateManager.Initialize();
     }
 
@@ -24,11 +24,6 @@
 
     void IDisposable.Dispose()
     {
-        if (SignalRStateManager?.OnChange != null)
-        {
-#pragma warning disable CS8601
-            SignalRStateManager.OnChange -= OnChangeHandler;
-#pragma warning restore CS8601
-        }
+        State.PropertyChanged -= OnChangeHandler;
     }
 }

@@ -1,3 +1,4 @@
+using System.ComponentModel;
 using System.Security.Claims;
 using Blazored.SessionStorage;
 using Microsoft.AspNetCore.Components.Authorization;
@@ -7,10 +8,8 @@ using Models.ViewModels;
 
 namespace UI;
 
-public class SignalRStateManager : AuthenticationStateProvider
+public sealed class SignalRStateManager : AuthenticationStateProvider, IDisposable
 {
-    public EventHandler? OnChange { get; set; }
-
     private readonly HubConnection _hubConnection;
 
     private readonly ISyncSessionStorageService _sessionStorageService;
@@ -24,13 +23,8 @@ public class SignalRStateManager : AuthenticationStateProvider
 
     private readonly State _state;
 
-    public bool IsLoading()
-    {
-        return _state.StateEnum.HasFlag(SignalRStateEnum.Initializing) ||
-               _state.StateEnum.HasFlag(SignalRStateEnum.Sending) ||
-               _state.StateEnum.HasFlag(SignalRStateEnum.Receiving);
-    }
-    
+    private Queue<Action> _queue = new Queue<Action>();
+
     public SignalRStateManager(
         HubConnection hubConnection,
         State state,
@@ -42,16 +36,23 @@ public class SignalRStateManager : AuthenticationStateProvider
         _sessionStorageService = sessionStorageService;
         _payloadEncryptionService = payloadEncryptionService;
         _logger = logger;
-        
+
         _state = state;
+
+        _state.PropertyChanged += StateChangedHandler;
     }
 
+    private void StateChangedHandler(object? source, PropertyChangedEventArgs eventArgs)
+    {
+        _logger.LogTrace("State changed: {}", eventArgs.PropertyName);
+    }
+    
     public async Task Initialize()
     {
         // Short circuit if already initialized
-        if (_state.StateEnum is SignalRStateEnum.Initializing or SignalRStateEnum.Initialized)
+        if (_state.StateEnum.HasFlag(SignalRStateEnum.Initializing) || _state.StateEnum.HasFlag(SignalRStateEnum.Initialized))
         {
-            _logger.LogTrace("SignalRClientState cannot be initialized with current state: {}.", _state);
+            _logger.LogTrace("SignalRClientState cannot be initialized with current state: {}", _state.StateEnum);
             
             // Until while initializing
             while (_state.StateEnum == SignalRStateEnum.Initializing) 
@@ -63,10 +64,8 @@ public class SignalRStateManager : AuthenticationStateProvider
         }
                 
         _state.StateEnum = SignalRStateEnum.Initializing;
-                
-        OnChange?.Invoke(this, EventArgs.Empty);
 
-        _logger.LogTrace("Initializing SignalRClientState.");
+        _logger.LogTrace("Initializing SignalRClientState");
 
         try
         {
@@ -80,9 +79,7 @@ public class SignalRStateManager : AuthenticationStateProvider
                 await Login(_sessionStorageService.GetItem<LoginViewModel>(SESSION_KEY));
             }
 
-            OnChange += (_, _) => { _logger.LogTrace("SignalR client session change occured."); };
-
-            _logger.LogTrace("Successfully initialized SignalRClientState.");
+            _logger.LogTrace("Successfully initialized SignalRClientState");
 
             _state.StateEnum = SignalRStateEnum.Initialized;
         }
@@ -92,23 +89,17 @@ public class SignalRStateManager : AuthenticationStateProvider
 
             _state.StateEnum = SignalRStateEnum.Failed;
         }
-        
-        OnChange?.Invoke(this, EventArgs.Empty);
     }
 
     private void SendActionHandler(string _, int count, List<string> names)
     {
         _state.Count = count;
         _state.Names = names;
-        
-        OnChange?.Invoke(this, EventArgs.Empty);
     }
 
     private void SendMessageHandler(MessagePayload payload)
     {
-        _state.StateEnum |= SignalRStateEnum.Receiving;        
-        
-        OnChange?.Invoke(this, EventArgs.Empty);
+        _state.StateEnum |= SignalRStateEnum.Receiving;   
         
         var isValid = _payloadEncryptionService.PayloadIsValid(_state.UserInfo!.Password, payload.Token);
         
@@ -127,21 +118,22 @@ public class SignalRStateManager : AuthenticationStateProvider
         }
 
         _state.StateEnum &= ~SignalRStateEnum.Receiving;
-        
-        OnChange?.Invoke(this, EventArgs.Empty);
     }
 
     public async Task Login(LoginViewModel? login)
     {
+        while (!_hubConnection.State.HasFlag(HubConnectionState.Connected))
+        {
+            await Task.Delay(1);
+        }
+        
         _state.UserInfo = login;
         
         _sessionStorageService.SetItem(SESSION_KEY, login);
         
         await _hubConnection.SendAsync("WhoAmi", login!.Name);
         
-        NotifyAuthenticationStateChanged(GetAuthenticationStateAsync());     
-        
-        OnChange?.Invoke(this, EventArgs.Empty);
+        NotifyAuthenticationStateChanged(GetAuthenticationStateAsync());
     }
 
     public bool IsLoggedIn()
@@ -156,21 +148,20 @@ public class SignalRStateManager : AuthenticationStateProvider
         _sessionStorageService.RemoveItem(SESSION_KEY);
 
         NotifyAuthenticationStateChanged(GetAuthenticationStateAsync());
-        
-        OnChange?.Invoke(this, EventArgs.Empty);
     }
 
     public async Task Send(MessagePayload messagePayload)
     {
-        _state.StateEnum |= SignalRStateEnum.Sending;
+        while (!_hubConnection.State.HasFlag(HubConnectionState.Connected))
+        {
+            await Task.Delay(1);
+        }
         
-        OnChange?.Invoke(this, EventArgs.Empty);
+        _state.StateEnum |= SignalRStateEnum.Sending;
 
         await _hubConnection.SendAsync("Send", _payloadEncryptionService.EncryptPayload(_state.UserInfo!.Password, messagePayload));
 
-        _state.StateEnum &= ~SignalRStateEnum.Sending;        
-        
-        OnChange?.Invoke(this, EventArgs.Empty);
+        _state.StateEnum &= ~SignalRStateEnum.Sending;
     }
 
     public override Task<AuthenticationState> GetAuthenticationStateAsync()
@@ -185,5 +176,10 @@ public class SignalRStateManager : AuthenticationStateProvider
         }
 
         return Task.FromResult(new AuthenticationState(new ClaimsPrincipal(identity)));
+    }
+
+    public void Dispose()
+    {
+        _state.PropertyChanged -= StateChangedHandler;
     }
 }

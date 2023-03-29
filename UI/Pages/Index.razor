@@ -4,10 +4,8 @@
 
 @code
 {
-    protected override async Task OnInitializedAsync()
+    protected override void OnInitialized()
     {
-        await SignalRStateManager.Initialize();
-        
         Navigation.NavigateTo(SignalRStateManager.IsLoggedIn() ? "/chat" : "/login");
     }
 }
