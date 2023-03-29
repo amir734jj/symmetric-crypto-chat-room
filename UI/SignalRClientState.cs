@@ -66,7 +66,7 @@ public class SignalRClientState : AuthenticationStateProvider
         // Short circuit if already initialized
         if (State is SignalRStateEnum.Initializing or SignalRStateEnum.Initialized)
         {
-            _logger.LogTrace("SignalRClientState cannot be initialized with current state: {}.", State);
+            _logger.LogTrace("SignalRClientState cannot be initialized with current state: {}", State);
             
             // Until while initializing
             while (State == SignalRStateEnum.Initializing) 
@@ -79,7 +79,7 @@ public class SignalRClientState : AuthenticationStateProvider
         
         State = SignalRStateEnum.Initializing;
 
-        _logger.LogTrace("Initializing SignalRClientState.");
+        _logger.LogTrace("Initializing SignalRClientState");
 
         try
         {
@@ -93,9 +93,9 @@ public class SignalRClientState : AuthenticationStateProvider
                 await Login(_sessionStorageService.GetItem<LoginViewModel>(SESSION_KEY));
             }
 
-            OnChange += (_, _) => { _logger.LogTrace("SignalR client session change occured."); };
+            OnChange += (_, _) => { _logger.LogTrace("SignalR client session change occured"); };
 
-            _logger.LogTrace("Successfully initialized SignalRClientState.");
+            _logger.LogTrace("Successfully initialized SignalRClientState");
 
             State = SignalRStateEnum.Initialized;
         }
