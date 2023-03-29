@@ -11,12 +11,17 @@
         <PackageReference Include="BlazorDownloadFile" Version="2.4.0.2" />
         <PackageReference Include="Blazored.SessionStorage" Version="2.3.0" />
         <PackageReference Include="BouncyCastle.NetCore" Version="1.9.0" />
+        <PackageReference Include="Fody" Version="6.6.4">
+          <PrivateAssets>all</PrivateAssets>
+          <IncludeAssets>runtime; build; native; contentfiles; analyzers; buildtransitive</IncludeAssets>
+        </PackageReference>
         <PackageReference Include="Havit.Blazor.Components.Web.Bootstrap" Version="3.2.11" />
         <PackageReference Include="Microsoft.AspNetCore.Components.Authorization" Version="7.0.4" />
         <PackageReference Include="Microsoft.AspNetCore.Components.WebAssembly" Version="7.0.3" />
         <PackageReference Include="Microsoft.AspNetCore.Components.WebAssembly.DevServer" Version="7.0.3" PrivateAssets="all" />
         <PackageReference Include="Microsoft.AspNetCore.SignalR.Client" Version="7.0.4" />
         <PackageReference Include="NSec.Cryptography" Version="22.4.0" />
+        <PackageReference Include="PropertyChanged.Fody" Version="4.1.0" />
     </ItemGroup>
 
     <ItemGroup>

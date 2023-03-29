@@ -5,7 +5,7 @@
 @using UI.Extensions
 @using BlazorDownloadFile
 @using ByteSizeLib
-@inject SignalRClientState SignalRClientState
+@inject SignalRStateManager SignalRStateManager
 @inject NavigationManager Navigation
 @inject ILogger<Chat> Logger
 @inject IBlazorDownloadFileService BlazorDownloadFileService
@@ -15,11 +15,11 @@
 <PageTitle>Chatroom </PageTitle>
 
 <div class="mt-3">
-    <h3>Welcome (<code>@(SignalRClientState.UserInfo?.Name)</code>) to chatroom:</h3>
+    <h3>Welcome (<code>@(SignalRStateManager.State.UserInfo?.Name)</code>) to chatroom:</h3>
     <p>
         Note that <code>password</code> is never sent via a socket, You are responsible to exchange the symmetric key
         <br/>
-        Active users (@(SignalRClientState.Count)): @(string.Join(", ", SignalRClientState.Names))
+        Active users (@(SignalRStateManager.Count)): @(string.Join(", ", SignalRStateManager.Names))
     </p>
 
     <div class="row">
@@ -56,14 +56,14 @@
 
     <br/>
 
-    @if (SignalRClientState.Messages.Count == 0)
+    @if (SignalRStateManager.Messages.Count == 0)
     {
         <HxAlert Color="ThemeColor.Warning">
             <strong>Info!</strong> No message yet.
         </HxAlert>
     }
 
-    @foreach (var (message, valid) in SignalRClientState.Messages)
+    @foreach (var (message, valid) in SignalRStateManager.Messages)
     {
         <HxCard CssClass="mt-3">
             <HeaderTemplate>
@@ -135,19 +135,19 @@
 
     protected override async Task OnInitializedAsync()
     {
-        await SignalRClientState.Initialize();
+        await SignalRStateManager.Initialize();
 
-        if (!SignalRClientState.IsLoggedIn())
+        if (!SignalRStateManager.IsLoggedIn())
         {
             Navigation.NavigateTo("/");
         }
 
-        SignalRClientState.OnChange += OnChangeHandler;
+        SignalRStateManager.OnChange += OnChangeHandler;
     }
 
     private void LogoutHandler()
     {
-        SignalRClientState.Logout();
+        SignalRStateManager.Logout();
 
         Navigation.NavigateTo("/");
     }
@@ -173,14 +173,14 @@
     async Task ValidFormSubmitted(EditContext editContext)
     {
         // Just making sure.
-        if (SignalRClientState.UserInfo == null) return;
+        if (SignalRStateManager.UserInfo == null) return;
 
         try
         {
             _messagePayload.Date = DateTime.Now;
-            _messagePayload.Name = SignalRClientState.UserInfo!.Name;
+            _messagePayload.Name = SignalRStateManager.UserInfo!.Name;
 
-            await SignalRClientState.Send(_messagePayload);
+            await SignalRStateManager.Send(_messagePayload);
 
             // Reset the payload
             _messagePayload = new MessagePayload();
@@ -210,10 +210,10 @@
 
     void IDisposable.Dispose()
     {
-        if (SignalRClientState?.OnChange != null)
+        if (SignalRStateManager?.OnChange != null)
         {
 #pragma warning disable CS8601
-            SignalRClientState.OnChange -= OnChangeHandler;
+            SignalRStateManager.OnChange -= OnChangeHandler;
 #pragma warning restore CS8601
         }
     }

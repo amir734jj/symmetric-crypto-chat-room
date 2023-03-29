@@ -39,14 +39,18 @@ public class Startup
             .AllowAnyMethod()
             .AllowCredentials()));
 
+        services.AddControllers();
+
+        services.AddHealthChecks();
+
         services.AddOptions();
-            
+
         services.AddResponseCompression();
 
         services.AddLogging();
 
         services.AddRouting(options => options.LowercaseUrls = true);
-        
+
         services.AddSignalR(c =>
         {
             c.MaximumReceiveMessageSize = (long)ByteSize.FromMegaBytes(50).Bytes; // 50 mega-bytes
@@ -71,12 +75,17 @@ public class Startup
         app.UseDefaultFiles()
             .UseStaticFiles(new StaticFileOptions
             {
+                // Needed to serve dll files of Blazor webassembly
                 ServeUnknownFileTypes = true
-            })
-            .UseSpa(opt =>
+            }).UseSpa(opt =>
             {
-                opt.ApplicationBuilder.UseRouting()
-                    .UseEndpoints(endpoints => { endpoints.MapHub<MessageHub>("/signalr"); });
+                opt.ApplicationBuilder
+                    .UseRouting()
+                    .UseEndpoints(endpoints =>
+                    {
+                        endpoints.MapControllers();
+                        endpoints.MapHub<MessageHub>("/signalr");
+                    });
             });
     }
 }
