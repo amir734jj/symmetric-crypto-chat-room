@@ -13,6 +13,7 @@ Simple secure chat room web (+ file transfer) application using SignalR (dotnet 
 - Max file size is `50mb` (binary format for transport)
 - Session password is store as plaintext via a cookie in your browser
 - Used [LiteDB](https://www.litedb.org/) to playback messages from 10 minutes ago to just joined users
+- [Fody.PropertyChanged](https://github.com/Fody/PropertyChanged) to detect if any of state's properties changes which triggers re-renders of UI
 
 ### Screenshots
 
