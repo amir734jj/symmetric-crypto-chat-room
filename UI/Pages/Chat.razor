@@ -5,11 +5,14 @@
 @using UI.Extensions
 @using BlazorDownloadFile
 @using ByteSizeLib
+@using CurrieTechnologies.Blazor.PageVisibility
 @inject SignalRStateManager SignalRStateManager
 @inject NavigationManager Navigation
 @inject ILogger<Chat> Logger
 @inject IBlazorDownloadFileService BlazorDownloadFileService
 @inject State State
+@inject PageVisibilityService Visibility
+@inject IJSRuntime Js
 @attribute [Authorize]
 @implements IDisposable
 
@@ -129,10 +132,17 @@
     }
 </div>
 
+<audio @ref="_elementReference" style="display: none">
+    <source src="message.mp3" type="audio/mpeg">
+    Your browser does not support the audio element.
+</audio>
+
 @code {
     private HxInputFile? _component;
 
     private MessagePayload _messagePayload = new();
+
+    private ElementReference _elementReference;
 
     protected override void OnInitialized()
     {
@@ -198,6 +208,11 @@
     private void OnChangeHandler(object? _, EventArgs args)
     {
         StateHasChanged();
+
+        if (State.StateEnum.HasFlag(SignalRStateEnum.Receiving) && Visibility.IsHidden())
+        {            
+            Js.InvokeVoidAsync("playAudio", _elementReference);
+        }
     }
 
     private async Task ClearFileInput()

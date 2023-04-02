@@ -32,4 +32,16 @@
     <script src="_framework/blazor.webassembly.js"></script>
 </body>
 
+
+<script>
+    function playAudio(element) {
+        stopAudio(element);
+        element.play();
+    }
+    function stopAudio(element) {
+        element.pause();
+        element.currentTime = 0;
+    }
+</script>
+
 </html>

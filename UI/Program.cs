@@ -1,6 +1,7 @@
 using Blazor.Extensions.Logging;
 using BlazorDownloadFile;
 using Blazored.SessionStorage;
+using CurrieTechnologies.Blazor.PageVisibility;
 using Havit.Blazor.Components.Web;
 using Microsoft.AspNetCore.Components.Authorization;
 using Microsoft.AspNetCore.Components.Web;
@@ -25,6 +26,8 @@ builder.Services.AddSingleton(new HubConnectionBuilder()
     .WithAutomaticReconnect()
     .AddJsonProtocol()
     .Build());
+
+builder.Services.AddPageVisibility();
 
 builder.Services.AddBlazoredSessionStorageAsSingleton();
 
