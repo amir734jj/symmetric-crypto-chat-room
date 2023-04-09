@@ -1,6 +1,7 @@
 using System.ComponentModel;
 using System.Security.Claims;
 using Blazored.SessionStorage;
+using Microsoft.AspNetCore.Components;
 using Microsoft.AspNetCore.Components.Authorization;
 using Microsoft.AspNetCore.SignalR.Client;
 using Models;
@@ -15,6 +16,7 @@ public sealed class SignalRStateManager : AuthenticationStateProvider, IDisposab
     private readonly ISyncSessionStorageService _sessionStorageService;
     
     private readonly PayloadEncryptionService _payloadEncryptionService;
+    private readonly NavigationManager _navigation;
 
     private readonly ILogger<SignalRStateManager> _logger;
 
@@ -30,13 +32,14 @@ public sealed class SignalRStateManager : AuthenticationStateProvider, IDisposab
         State state,
         ISyncSessionStorageService sessionStorageService,
         PayloadEncryptionService payloadEncryptionService,
+        NavigationManager navigation,
         ILogger<SignalRStateManager> logger)
     {
         _hubConnection = hubConnection;
         _sessionStorageService = sessionStorageService;
         _payloadEncryptionService = payloadEncryptionService;
+        _navigation = navigation;
         _logger = logger;
-
         _state = state;
 
         _state.PropertyChanged += StateChangedHandler;
@@ -77,6 +80,8 @@ public sealed class SignalRStateManager : AuthenticationStateProvider, IDisposab
             if (_sessionStorageService.ContainKey(SESSION_KEY))
             {
                 await Login(_sessionStorageService.GetItem<LoginViewModel>(SESSION_KEY));
+                
+                _navigation.NavigateTo("/Chat");
             }
 
             _logger.LogTrace("Successfully initialized SignalRClientState");

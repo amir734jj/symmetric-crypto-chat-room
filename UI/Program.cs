@@ -1,7 +1,7 @@
 using Blazor.Extensions.Logging;
 using BlazorDownloadFile;
 using Blazored.SessionStorage;
-using CurrieTechnologies.Blazor.PageVisibility;
+using CurrieTechnologies.Razor.PageVisibility;
 using Havit.Blazor.Components.Web;
 using Microsoft.AspNetCore.Components.Authorization;
 using Microsoft.AspNetCore.Components.Web;

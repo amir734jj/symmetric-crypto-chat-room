@@ -5,7 +5,9 @@
 @using UI.Extensions
 @using BlazorDownloadFile
 @using ByteSizeLib
-@using CurrieTechnologies.Blazor.PageVisibility
+@using System.Text.Json
+@using CurrieTechnologies.Razor.PageVisibility
+@using Models.Interfaces
 @inject SignalRStateManager SignalRStateManager
 @inject NavigationManager Navigation
 @inject ILogger<Chat> Logger
@@ -42,7 +44,7 @@
         <HxFormState>
             <HxInputTextArea Label="Message" @bind-Value="@_messagePayload.Message" Placeholder="Enter message here" Type="InputType.Text"/>
 
-            <HxInputFile @ref="_component" Label="File" OnChange="@(OnFileChange)" Multiple="@(true)" MaxFileSize="@((long)ByteSize.FromMegaBytes(25).Bytes)" />
+            <HxInputFile @ref="_component" Label="File" OnChange="@(OnFileChange)" Multiple="@(true)" MaxFileSize="@((long)ByteSize.FromMegaBytes(25).Bytes)"/>
 
             @if (_component != null && _messagePayload.Files != null && _messagePayload.Files.Any())
             {
@@ -56,7 +58,28 @@
 
     <hr/>
 
-    <h4>Messages:</h4>
+    <div class="row">
+        <div class="col-sm-7">
+            <div class="float-start">
+                <h4>Messages:</h4>
+            </div>
+        </div>
+        <div class="col-sm-5">
+            <div class="float-end ms-2">
+                <HxButton Size="ButtonSize.Small" Color="ThemeColor.Secondary" OnClick="@(() => _showState = !_showState)">
+                    @(_showState ? "Hide State" : "Show State")
+                </HxButton>
+            </div>
+        </div>
+    </div>
+
+
+    @if (_showState)
+    {
+        <pre class="my-2">
+@(JsonSerializer.Serialize(State, typeof(IReadonlyState), new JsonSerializerOptions { WriteIndented = true }))
+        </pre>
+    }
 
     <br/>
 
@@ -144,6 +167,8 @@
 
     private ElementReference _elementReference;
 
+    private bool _showState;
+
     protected override void OnInitialized()
     {
         if (!SignalRStateManager.IsLoggedIn())
@@ -205,14 +230,21 @@
         Logger.LogError("Form validation failed because of {}", editContext.GetValidationMessages());
     }
 
-    private void OnChangeHandler(object? _, EventArgs args)
+    private void OnChangeHandler(object? source, EventArgs args)
     {
-        StateHasChanged();
+#pragma warning disable CS4014
+        OnChangeHandlerAsync(source, args);
+#pragma warning restore CS4014
+    }
 
-        if (State.StateEnum.HasFlag(SignalRStateEnum.Receiving) && Visibility.IsHidden())
-        {            
-            Js.InvokeVoidAsync("playAudio", _elementReference);
+    private async Task OnChangeHandlerAsync(object? _, EventArgs args)
+    {
+        if (State.StateEnum.HasFlag(SignalRStateEnum.Receiving) && await Visibility.IsHiddenAsync())
+        {
+            await Js.InvokeVoidAsync("playAudio", _elementReference);
         }
+        
+        StateHasChanged();
     }
 
     private async Task ClearFileInput()
@@ -226,4 +258,5 @@
     {
         State.PropertyChanged -= OnChangeHandler;
     }
+
 }
