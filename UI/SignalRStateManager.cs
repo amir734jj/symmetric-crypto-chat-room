@@ -16,6 +16,7 @@ public sealed class SignalRStateManager : AuthenticationStateProvider, IDisposab
     private readonly ISyncSessionStorageService _sessionStorageService;
     
     private readonly PayloadEncryptionService _payloadEncryptionService;
+    
     private readonly NavigationManager _navigation;
 
     private readonly ILogger<SignalRStateManager> _logger;
@@ -24,8 +25,6 @@ public sealed class SignalRStateManager : AuthenticationStateProvider, IDisposab
     private const string SESSION_KEY = "SYMMETRIC_CRYPTO_SESSION_KEY";
 
     private readonly State _state;
-
-    private Queue<Action> _queue = new Queue<Action>();
 
     public SignalRStateManager(
         HubConnection hubConnection,
