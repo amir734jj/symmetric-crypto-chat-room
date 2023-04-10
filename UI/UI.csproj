@@ -17,6 +17,8 @@
         <PackageReference Include="Microsoft.AspNetCore.Components.WebAssembly" Version="7.0.3" />
         <PackageReference Include="Microsoft.AspNetCore.Components.WebAssembly.DevServer" Version="7.0.3" PrivateAssets="all" />
         <PackageReference Include="Microsoft.AspNetCore.SignalR.Client" Version="7.0.4" />
+        <PackageReference Include="ReactiveUI" Version="18.4.26" />
+        <PackageReference Include="ReactiveUI.Blazor" Version="18.4.26" />
     </ItemGroup>
 
     <ItemGroup>

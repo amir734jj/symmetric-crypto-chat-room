@@ -1,4 +1,5 @@
 using System.ComponentModel;
+using System.Reactive.Linq;
 using System.Security.Claims;
 using Blazored.SessionStorage;
 using Microsoft.AspNetCore.Components;
@@ -6,6 +7,7 @@ using Microsoft.AspNetCore.Components.Authorization;
 using Microsoft.AspNetCore.SignalR.Client;
 using Models;
 using Models.ViewModels;
+using ReactiveUI;
 
 namespace UI;
 
@@ -42,11 +44,17 @@ public sealed class SignalRStateManager : AuthenticationStateProvider, IDisposab
         _state = state;
 
         _state.PropertyChanged += StateChangedHandler;
+        
+        this.WhenAnyValue(x => x._state.StateEnum)
+            .Throttle(TimeSpan.FromSeconds(1), RxApp.TaskpoolScheduler)
+            .Where(x => x.HasFlag(SignalRStateEnum.Uninitialized))
+            .ObserveOn(RxApp.MainThreadScheduler)
+            .InvokeCommand(ReactiveCommand.CreateFromTask(Initialize));
     }
 
     private void StateChangedHandler(object? source, PropertyChangedEventArgs eventArgs)
     {
-        _logger.LogTrace("State changed: {}", eventArgs.PropertyName);
+        _logger.LogTrace("State property {} changed, state: {}", eventArgs.PropertyName, _state.StateEnum);
     }
     
     public async Task Initialize()
@@ -57,7 +65,7 @@ public sealed class SignalRStateManager : AuthenticationStateProvider, IDisposab
             _logger.LogTrace("SignalRClientState cannot be initialized with current state: {}", _state.StateEnum);
             
             // Until while initializing
-            while (_state.StateEnum == SignalRStateEnum.Initializing) 
+            while (_state.StateEnum.HasFlag(SignalRStateEnum.Initializing)) 
             {
                 await Task.Delay(1);
             }
@@ -75,6 +83,8 @@ public sealed class SignalRStateManager : AuthenticationStateProvider, IDisposab
             _hubConnection.On("SendMessage", new Action<MessagePayload>(SendMessageHandler));
 
             await _hubConnection.StartAsync();
+            
+            _state.StateEnum = SignalRStateEnum.Initialized;
 
             if (_sessionStorageService.ContainKey(SESSION_KEY))
             {
@@ -84,8 +94,6 @@ public sealed class SignalRStateManager : AuthenticationStateProvider, IDisposab
             }
 
             _logger.LogTrace("Successfully initialized SignalRClientState");
-
-            _state.StateEnum = SignalRStateEnum.Initialized;
         }
         catch (Exception e)
         {
