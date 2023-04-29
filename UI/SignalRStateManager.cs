@@ -90,7 +90,7 @@ public sealed class SignalRStateManager : AuthenticationStateProvider, IDisposab
             {
                 await Login(_sessionStorageService.GetItem<LoginViewModel>(SESSION_KEY));
                 
-                _navigation.NavigateTo("/Chat");
+                _navigation.NavigateTo("/chat");
             }
 
             _logger.LogTrace("Successfully initialized SignalRClientState");
@@ -183,8 +183,12 @@ public sealed class SignalRStateManager : AuthenticationStateProvider, IDisposab
         // ReSharper disable once InvertIf
         if (IsLoggedIn())
         {
-            var claims = new[] { new Claim(ClaimTypes.Name, _state.UserInfo!.Name) };
-            identity = new ClaimsIdentity(claims, "Server authentication");
+            var claims = new[]
+            {
+                new Claim(ClaimTypes.Name, _state.UserInfo!.Name),
+                new Claim(ClaimTypes.NameIdentifier, _state.UserInfo!.Name)
+            };
+            identity = new ClaimsIdentity(claims, "auth");
         }
 
         return Task.FromResult(new AuthenticationState(new ClaimsPrincipal(identity)));

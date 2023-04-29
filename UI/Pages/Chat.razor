@@ -1,4 +1,5 @@
-@page "/Chat"
+@page "/chat"
+@attribute [Authorize]
 @using Microsoft.AspNetCore.Authorization
 @using Microsoft.AspNetCore.Components.Forms
 @using Models
@@ -15,7 +16,6 @@
 @inject State State
 @inject PageVisibilityService Visibility
 @inject IJSRuntime Js
-@attribute [Authorize]
 @implements IDisposable
 
 <PageTitle>Chatroom </PageTitle>

@@ -1,6 +1,8 @@
 ﻿@page "/"
+@using Microsoft.AspNetCore.Authorization
 @inject NavigationManager Navigation
 @inject SignalRStateManager SignalRStateManager
+@attribute [AllowAnonymous]
 
 @code
 {
