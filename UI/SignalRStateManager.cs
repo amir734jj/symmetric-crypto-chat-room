@@ -1,4 +1,5 @@
 using System.ComponentModel;
+using System.Net;
 using System.Reactive.Linq;
 using System.Security.Claims;
 using Blazored.SessionStorage;
@@ -83,8 +84,6 @@ public sealed class SignalRStateManager : AuthenticationStateProvider, IDisposab
             _hubConnection.On("SendMessage", new Action<MessagePayload>(SendMessageHandler));
 
             await _hubConnection.StartAsync();
-            
-            _state.StateEnum = SignalRStateEnum.Initialized;
 
             if (_sessionStorageService.ContainKey(SESSION_KEY))
             {
@@ -94,6 +93,8 @@ public sealed class SignalRStateManager : AuthenticationStateProvider, IDisposab
             }
 
             _logger.LogTrace("Successfully initialized SignalRClientState");
+            
+            _state.StateEnum = SignalRStateEnum.Initialized;
         }
         catch (Exception e)
         {
@@ -148,7 +149,7 @@ public sealed class SignalRStateManager : AuthenticationStateProvider, IDisposab
         NotifyAuthenticationStateChanged(GetAuthenticationStateAsync());
     }
 
-    public bool IsLoggedIn()
+    private bool IsLoggedIn()
     {
         return _state.UserInfo != null;
     }
@@ -176,8 +177,13 @@ public sealed class SignalRStateManager : AuthenticationStateProvider, IDisposab
         _state.StateEnum &= ~SignalRStateEnum.Sending;
     }
 
-    public override Task<AuthenticationState> GetAuthenticationStateAsync()
+    public override async Task<AuthenticationState> GetAuthenticationStateAsync()
     {
+        while (!_state.StateEnum.HasFlag(SignalRStateEnum.Initialized))
+        {
+            await Task.Delay(1);
+        }
+        
         var identity = new ClaimsIdentity();
 
         // ReSharper disable once InvertIf
@@ -188,10 +194,10 @@ public sealed class SignalRStateManager : AuthenticationStateProvider, IDisposab
                 new Claim(ClaimTypes.Name, _state.UserInfo!.Name),
                 new Claim(ClaimTypes.NameIdentifier, _state.UserInfo!.Name)
             };
-            identity = new ClaimsIdentity(claims, "auth");
+            identity = new ClaimsIdentity(claims, AuthenticationSchemes.Basic.ToString());
         }
 
-        return Task.FromResult(new AuthenticationState(new ClaimsPrincipal(identity)));
+        return new AuthenticationState(new ClaimsPrincipal(identity));
     }
 
     public void Dispose()

@@ -171,11 +171,6 @@
 
     protected override void OnInitialized()
     {
-        if (!SignalRStateManager.IsLoggedIn())
-        {
-            Navigation.NavigateTo("/");
-        }
-
         State.PropertyChanged += OnChangeHandler;
     }
 

@@ -1,13 +1,26 @@
 ﻿@page "/"
 @using Microsoft.AspNetCore.Authorization
 @inject NavigationManager Navigation
-@inject SignalRStateManager SignalRStateManager
 @attribute [AllowAnonymous]
 
 @code
 {
-    protected override void OnInitialized()
+    [CascadingParameter]
+    private Task<AuthenticationState>? AuthenticationState { get; set; }
+
+    protected override async Task OnInitializedAsync()
     {
-        Navigation.NavigateTo(SignalRStateManager.IsLoggedIn() ? "/chat" : "/login");
+        if (AuthenticationState != null)
+        {
+            var userIdentity = (await AuthenticationState).User.Identity;
+
+            if (userIdentity is {IsAuthenticated: true })
+            {
+                Navigation.NavigateTo("/chat");
+                return;
+            }
+        }
+        
+        Navigation.NavigateTo("/login");
     }
 }

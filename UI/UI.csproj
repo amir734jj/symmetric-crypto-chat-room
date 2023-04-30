@@ -12,13 +12,13 @@
         <PackageReference Include="Blazored.SessionStorage" Version="2.3.0" />
         <PackageReference Include="BouncyCastle.NetCore" Version="1.9.0" />
         <PackageReference Include="CurrieTechnologies.Razor.PageVisibility" Version="1.0.0" />
-        <PackageReference Include="Havit.Blazor.Components.Web.Bootstrap" Version="3.2.11" />
-        <PackageReference Include="Microsoft.AspNetCore.Components.Authorization" Version="7.0.4" />
-        <PackageReference Include="Microsoft.AspNetCore.Components.WebAssembly" Version="7.0.3" />
-        <PackageReference Include="Microsoft.AspNetCore.Components.WebAssembly.DevServer" Version="7.0.3" PrivateAssets="all" />
-        <PackageReference Include="Microsoft.AspNetCore.SignalR.Client" Version="7.0.4" />
-        <PackageReference Include="ReactiveUI" Version="18.4.26" />
-        <PackageReference Include="ReactiveUI.Blazor" Version="18.4.26" />
+        <PackageReference Include="Havit.Blazor.Components.Web.Bootstrap" Version="3.2.14" />
+        <PackageReference Include="Microsoft.AspNetCore.Components.Authorization" Version="7.0.5" />
+        <PackageReference Include="Microsoft.AspNetCore.Components.WebAssembly" Version="7.0.5" />
+        <PackageReference Include="Microsoft.AspNetCore.Components.WebAssembly.DevServer" Version="7.0.5" PrivateAssets="all" />
+        <PackageReference Include="Microsoft.AspNetCore.SignalR.Client" Version="7.0.5" />
+        <PackageReference Include="ReactiveUI" Version="18.4.34" />
+        <PackageReference Include="ReactiveUI.Blazor" Version="18.4.34" />
     </ItemGroup>
 
     <ItemGroup>
