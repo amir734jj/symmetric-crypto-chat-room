@@ -8,11 +8,11 @@ namespace Models
 {
     public class State : INotifyPropertyChanged, IReadonlyState
     {
-        public LinkedList<(MessagePayload messagePayload, bool valid)> Messages { get; set; }
+        public LinkedList<(MessagePayload messagePayload, bool valid)> Messages { get; set; } = new LinkedList<(MessagePayload messagePayload, bool valid)>();
 
         public int Count { get; set; }
 
-        public List<string> Names { get; set; }
+        public List<string> Names { get; set; } = new List<string>();
 
         public LoginViewModel UserInfo { get; set; }
 
@@ -22,15 +22,8 @@ namespace Models
         /// logged in result when initialize has finished.
         /// </summary>
         [JsonConverter(typeof(JsonStringEnumConverter))]
-        public SignalRStateEnum StateEnum { get; set; }
+        public SignalRStateEnum StateEnum { get; set; } = SignalRStateEnum.Uninitialized;
 
         public event PropertyChangedEventHandler PropertyChanged;
-
-        public State()
-        {
-            Messages = new LinkedList<(MessagePayload messagePayload, bool valid)>();
-            Names = new List<string>();
-            StateEnum  = SignalRStateEnum.Uninitialized;
-        }
     }
 }

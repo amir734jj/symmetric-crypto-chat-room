@@ -2,61 +2,53 @@ using Models;
 
 namespace UI;
 
-public class PayloadEncryptionService
+public class PayloadEncryptionService(
+    SymmetricCryptography symmetricCryptography,
+    HashingUtility hashingUtility,
+    ILogger<PayloadEncryptionService> logger)
 {
-    private readonly SymmetricCryptography _symmetricCryptography;
-    private readonly HashingUtility _hashingUtility;
-    private readonly ILogger<PayloadEncryptionService> _logger;
-
-    public PayloadEncryptionService(SymmetricCryptography symmetricCryptography, HashingUtility hashingUtility,  ILogger<PayloadEncryptionService> logger)
-    {
-        _symmetricCryptography = symmetricCryptography;
-        _hashingUtility = hashingUtility;
-        _logger = logger;
-    }
-
     public MessagePayload EncryptPayload(string password, MessagePayload payload)
     {
-        _logger.LogTrace("Starting payload encryption process");
+        logger.LogTrace("Starting payload encryption process");
 
-        var keyMaterial = _hashingUtility.HashString(password);
+        var keyMaterial = hashingUtility.HashString(password);
 
         // Only set during encryption
-        payload.Token = _symmetricCryptography.Encrypt(keyMaterial, Convert.ToBase64String(keyMaterial));
-        payload.Message = _symmetricCryptography.Encrypt(keyMaterial, payload.Message);
+        payload.Token = symmetricCryptography.Encrypt(keyMaterial, Convert.ToBase64String(keyMaterial));
+        payload.Message = symmetricCryptography.Encrypt(keyMaterial, payload.Message);
 
         foreach (var payloadFile in payload.Files)
         {
-            payloadFile.Data = _symmetricCryptography.Encrypt(keyMaterial, payloadFile.Data);
+            payloadFile.Data = symmetricCryptography.Encrypt(keyMaterial, payloadFile.Data);
         }
         
-        _logger.LogTrace("Finished payload encryption process");
+        logger.LogTrace("Finished payload encryption process");
 
         return payload;
     }
 
     public MessagePayload DecryptPayload(string password, MessagePayload payload)
     {
-        _logger.LogTrace("Starting payload decryption process");
+        logger.LogTrace("Starting payload decryption process");
 
-        var keyMaterial = _hashingUtility.HashString(password);
+        var keyMaterial = hashingUtility.HashString(password);
 
-        payload.Message = _symmetricCryptography.Decrypt(keyMaterial, payload.Message);
+        payload.Message = symmetricCryptography.Decrypt(keyMaterial, payload.Message);
 
         foreach (var payloadFile in payload.Files)
         {
-            payloadFile.Data = _symmetricCryptography.Decrypt(keyMaterial, payloadFile.Data);
+            payloadFile.Data = symmetricCryptography.Decrypt(keyMaterial, payloadFile.Data);
         }
         
-        _logger.LogTrace("Finished payload decryption process");
+        logger.LogTrace("Finished payload decryption process");
 
         return payload;
     }
     
     public bool PayloadIsValid(string password, string token)
     {
-        var keyMaterial = _hashingUtility.HashString(password);
+        var keyMaterial = hashingUtility.HashString(password);
         
-        return _symmetricCryptography.Encrypt(keyMaterial, Convert.ToBase64String(keyMaterial)) == token;
+        return symmetricCryptography.Encrypt(keyMaterial, Convert.ToBase64String(keyMaterial)) == token;
     }
 }

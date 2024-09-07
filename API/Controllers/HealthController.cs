@@ -6,14 +6,8 @@ using Microsoft.Extensions.Diagnostics.HealthChecks;
 namespace API.Controllers;
 
 [Route("[controller]")]
-public class HealthController : Controller
+public class HealthController(HealthCheckService healthCheckService) : Controller
 {
-    private readonly HealthCheckService _healthCheckService;
-    public HealthController(HealthCheckService healthCheckService)
-    {
-        _healthCheckService = healthCheckService;
-    }
-
     /// <summary>
     ///  Get Health
     /// </summary>
@@ -25,7 +19,7 @@ public class HealthController : Controller
     [ProducesResponseType(typeof(HealthReport), (int)HttpStatusCode.OK)]
     public async Task<IActionResult> Get()
     {
-        var report = await _healthCheckService.CheckHealthAsync();
+        var report = await healthCheckService.CheckHealthAsync();
 
         return report.Status == HealthStatus.Healthy ? Ok(report) : StatusCode((int)HttpStatusCode.ServiceUnavailable, report);
     }
