@@ -13,7 +13,7 @@ namespace Domainlogic
         private readonly PlaybackLogic _playbackLogic;
 
         // connected IDs
-        private static readonly HashSet<string> ConnectedIds = new HashSet<string>();
+        private static readonly HashSet<string> ConnectedIds = new();
 
         private static readonly IDictionary<string, string> Names = new ConcurrentDictionary<string, string>();
 

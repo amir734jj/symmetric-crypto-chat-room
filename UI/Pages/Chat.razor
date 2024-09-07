@@ -48,7 +48,7 @@
 
             @if (_component != null && _messagePayload.Files != null && _messagePayload.Files.Any())
             {
-                <HxButton Text="Clear" CssClass="mt-3" OnClick="@(async () => await ClearFileInput())" Color="ThemeColor.Secondary"/>
+                <HxButton Text="Clear" CssClass="mt-2" OnClick="@(async () => await ClearFileInput())" Color="ThemeColor.Secondary"/>
             }
 
             <HxSubmit Color="ThemeColor.Success" Enabled="true">Send Message</HxSubmit>
@@ -68,6 +68,10 @@
             <div class="float-end ms-2">
                 <HxButton Size="ButtonSize.Small" Color="ThemeColor.Secondary" OnClick="@(() => _showState = !_showState)">
                     @(_showState ? "Hide State" : "Show State")
+                </HxButton>
+
+                <HxButton Size="ButtonSize.Small" Color="ThemeColor.Secondary" OnClick="@(() => _showInvalid = !_showInvalid)">
+                    @(_showInvalid ? "Hide Invalid" : "Show Invalid")
                 </HxButton>
             </div>
         </div>
@@ -92,6 +96,8 @@
 
     @foreach (var (message, valid) in State.Messages)
     {
+        if (!_showInvalid && !valid) continue;
+
         <HxCard CssClass="mt-3">
             <HeaderTemplate>
                 <div class="float-start">
@@ -131,8 +137,6 @@
                         }
 
                         <label class="ms-2">
-
-
                             @file.Name
                         </label>
                     </p>
@@ -168,6 +172,8 @@
     private ElementReference _elementReference;
 
     private bool _showState;
+    
+    private bool _showInvalid;
 
     protected override void OnInitialized()
     {
@@ -258,5 +264,4 @@
     {
         State.PropertyChanged -= OnChangeHandler;
     }
-
 }
