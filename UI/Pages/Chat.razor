@@ -51,7 +51,7 @@
                 <HxButton Text="Clear file" CssClass="mt-2" OnClick="@(async () => await ClearFileInput())" Color="ThemeColor.Secondary"/>
             }
 
-            <HxSubmit Color="ThemeColor.Success" Enabled="true">Send Message</HxSubmit>
+            <HxSubmit Color="ThemeColor.Success" Enabled="@(!State.StateEnum.HasFlag(SignalRStateEnum.Sending))">Send Message</HxSubmit>
         </HxFormState>
 
     </EditForm>
