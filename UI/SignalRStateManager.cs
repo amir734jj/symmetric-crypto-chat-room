@@ -2,6 +2,7 @@ using System.ComponentModel;
 using System.Reactive.Linq;
 using System.Security.Claims;
 using Blazored.SessionStorage;
+using CaseExtensions;
 using Microsoft.AspNetCore.Components;
 using Microsoft.AspNetCore.Components.Authorization;
 using Microsoft.AspNetCore.SignalR.Client;
@@ -111,6 +112,9 @@ public sealed class SignalRStateManager : AuthenticationStateProvider, IDisposab
         {
             await Task.Delay(1);
         }
+        
+        // sanitize channel
+        login.Channel = login.Channel.Trim().ToKebabCase();
         
         _state.UserInfo = login;
         

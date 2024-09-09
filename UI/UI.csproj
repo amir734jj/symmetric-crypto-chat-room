@@ -11,6 +11,7 @@
         <PackageReference Include="BlazorDownloadFile" Version="2.4.0.2" />
         <PackageReference Include="Blazored.SessionStorage" Version="2.4.0" />
         <PackageReference Include="BouncyCastle.NetCore" Version="2.2.1" />
+        <PackageReference Include="CaseExtensions" Version="1.1.0" />
         <PackageReference Include="CurrieTechnologies.Razor.PageVisibility" Version="1.0.0" />
         <PackageReference Include="Havit.Blazor.Components.Web.Bootstrap" Version="4.6.13" />
         <PackageReference Include="Microsoft.AspNetCore.Components.Authorization" Version="8.0.8" />
