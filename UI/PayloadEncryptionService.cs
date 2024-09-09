@@ -19,6 +19,7 @@ public class PayloadEncryptionService(
 
         foreach (var payloadFile in payload.Files)
         {
+            payloadFile.Name = symmetricCryptography.Encrypt(keyMaterial, payloadFile.Name);
             payloadFile.Data = symmetricCryptography.Encrypt(keyMaterial, payloadFile.Data);
         }
         
@@ -37,6 +38,7 @@ public class PayloadEncryptionService(
 
         foreach (var payloadFile in payload.Files)
         {
+            payloadFile.Name = symmetricCryptography.Decrypt(keyMaterial, payloadFile.Name);
             payloadFile.Data = symmetricCryptography.Decrypt(keyMaterial, payloadFile.Data);
         }
         
