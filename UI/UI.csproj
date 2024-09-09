@@ -20,6 +20,10 @@
         <PackageReference Include="ReactiveUI" Version="20.1.1" />
         <PackageReference Include="ReactiveUI.Blazor" Version="20.1.1" />
         <PackageReference Include="System.Text.Json" Version="8.0.4" />
+        <PackageReference Include="TypedSignalR.Client" Version="3.5.2">
+          <PrivateAssets>all</PrivateAssets>
+          <IncludeAssets>runtime; build; native; contentfiles; analyzers; buildtransitive</IncludeAssets>
+        </PackageReference>
     </ItemGroup>
 
     <ItemGroup>

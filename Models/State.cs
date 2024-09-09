@@ -10,8 +10,6 @@ namespace Models
     {
         public LinkedList<(MessagePayload messagePayload, bool valid)> Messages { get; set; } = new LinkedList<(MessagePayload messagePayload, bool valid)>();
 
-        public int Count { get; set; }
-
         public List<string> Names { get; set; } = new List<string>();
 
         public LoginViewModel UserInfo { get; set; }

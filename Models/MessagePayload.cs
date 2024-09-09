@@ -10,6 +10,8 @@ namespace Models
 
         public string Name { get; set; }
         
+        public string Channel { get; set; }
+        
         [Required]
         public string Message { get; set; }
         

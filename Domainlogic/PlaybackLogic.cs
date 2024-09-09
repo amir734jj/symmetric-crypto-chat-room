@@ -36,9 +36,9 @@ public sealed class PlaybackLogic : IDisposable
         }
     }
 
-    public IEnumerable<MessagePayload> GetMessages()
+    public IEnumerable<MessagePayload> GetMessages(string channel)
     {
-        return _collection.FindAll();
+        return _collection.Find(x => x.Channel == channel).ToList();
     }
 
     public void RecordMessage(MessagePayload message)

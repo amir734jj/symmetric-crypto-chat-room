@@ -6,8 +6,6 @@ namespace Models.Interfaces
     public interface IReadonlyState
     {
         public List<string> Names { get; set; }
-        
-        public int Count { get; set; }
 
         /// <summary>
         /// This is needed because calling async initialize in constructor is not supported in blazor

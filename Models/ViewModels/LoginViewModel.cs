@@ -9,7 +9,11 @@ namespace Models.ViewModels
         public string Name { get; set; }
         
         [Required(ErrorMessage = "Enter password.")]
-        [StringLength(50, MinimumLength = 6)]
+        [StringLength(50, MinimumLength = 3)]
         public string Password { get; set; }
+
+        [Required(ErrorMessage = "Enter channel.")]
+        [StringLength(50, MinimumLength = 3)]
+        public string Channel { get; set; }
     }
 }

@@ -25,7 +25,7 @@
     <p>
         Note that <code>password</code> is never sent via a socket, You are responsible to exchange the symmetric key
         <br/>
-        Active users (@(State.Count)): @(string.Join(", ", State.Names))
+        Active users (@(State.Names.Count)): @(string.Join(", ", State.Names))
     </p>
 
     <div class="row">
@@ -48,7 +48,7 @@
 
             @if (_component != null && _messagePayload.Files != null && _messagePayload.Files.Any())
             {
-                <HxButton Text="Clear" CssClass="mt-2" OnClick="@(async () => await ClearFileInput())" Color="ThemeColor.Secondary"/>
+                <HxButton Text="Clear file" CssClass="mt-2" OnClick="@(async () => await ClearFileInput())" Color="ThemeColor.Secondary"/>
             }
 
             <HxSubmit Color="ThemeColor.Success" Enabled="true">Send Message</HxSubmit>
@@ -219,6 +219,7 @@
         {
             _messagePayload.Date = DateTime.Now;
             _messagePayload.Name = State.UserInfo!.Name;
+            _messagePayload.Channel = State.UserInfo.Channel;
 
             await SignalRStateManager.Send(_messagePayload);
 
@@ -257,7 +258,7 @@
     {
         await _component?.ResetAsync()!;
 
-        _messagePayload.Files = new List<FilePayload>();
+        _messagePayload.Files = [];
     }
 
     void IDisposable.Dispose()

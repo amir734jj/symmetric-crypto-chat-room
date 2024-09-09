@@ -1,5 +1,4 @@
 @page "/Login"
-@using Microsoft.AspNetCore.Components
 @using Models.ViewModels
 @using Microsoft.AspNetCore.Authorization
 @using Microsoft.AspNetCore.Components.Forms
@@ -21,9 +20,11 @@
         <DataAnnotationsValidator/>
     
         <HxFormState>
-            <HxInputText Label="Name" @bind-Value="@_model.Name" Placeholder="Enter name here" Hint="Name you want to use in the chat"/>
-    
-            <HxInputText Label="Password" @bind-Value="@_model.Password" Placeholder="Enter password here" Hint="Password (at least 6 alphanumeric characters long)" Type="InputType.Password"/>
+            <HxInputText Label="Name" @bind-Value="@_model.Name" Placeholder="Enter your name here" Hint="Name you want to use in the chat"/>
+
+            <HxInputText Label="Channel" @bind-Value="@_model.Channel" Placeholder="Enter channel name here" Hint="Name of the channel want to join"/>
+
+            <HxInputText Label="Password" @bind-Value="@_model.Password" Placeholder="Enter password here" Hint="Password (at least 3 characters long)" Type="InputType.Password"/>
     
             <HxSubmit Color="ThemeColor.Primary" Enabled="true">Login</HxSubmit>
         </HxFormState>

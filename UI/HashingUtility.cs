@@ -7,7 +7,7 @@ public class HashingUtility
 {
     public byte[] HashString(string keyMaterial)
     {
-        // Keyderivation via SHA256
+        // Key derivation via SHA256
         var keyMaterialBytes = Encoding.UTF8.GetBytes(keyMaterial);
         var digest = new Sha256Digest();
         digest.BlockUpdate(keyMaterialBytes, 0, keyMaterialBytes.Length);

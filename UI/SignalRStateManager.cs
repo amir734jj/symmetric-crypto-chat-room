@@ -6,15 +6,15 @@ using Microsoft.AspNetCore.Components;
 using Microsoft.AspNetCore.Components.Authorization;
 using Microsoft.AspNetCore.SignalR.Client;
 using Models;
+using Models.Hub;
 using Models.ViewModels;
 using ReactiveUI;
+using TypedSignalR.Client;
 
 namespace UI;
 
-public sealed class SignalRStateManager : AuthenticationStateProvider, IDisposable
+public sealed class SignalRStateManager : AuthenticationStateProvider, IDisposable, ITypedClient
 {
-    private readonly HubConnection _hubConnection;
-
     private readonly ISyncSessionStorageService _sessionStorageService;
     
     private readonly PayloadEncryptionService _payloadEncryptionService;
@@ -27,6 +27,8 @@ public sealed class SignalRStateManager : AuthenticationStateProvider, IDisposab
     private const string SESSION_KEY = "SYMMETRIC_CRYPTO_SESSION_KEY";
 
     private readonly State _state;
+    private readonly ITypedServer _server;
+    private readonly HubConnection _hubConnection;
 
     public SignalRStateManager(
         HubConnection hubConnection,
@@ -50,6 +52,9 @@ public sealed class SignalRStateManager : AuthenticationStateProvider, IDisposab
             .Where(x => x.HasFlag(SignalRStateEnum.Uninitialized))
             .ObserveOn(RxApp.MainThreadScheduler)
             .InvokeCommand(ReactiveCommand.CreateFromTask(Initialize));
+        
+        _server = hubConnection.CreateHubProxy<ITypedServer>();
+        hubConnection.Register<ITypedClient>(this);
     }
 
     private void StateChangedHandler(object? source, PropertyChangedEventArgs eventArgs)
@@ -79,9 +84,6 @@ public sealed class SignalRStateManager : AuthenticationStateProvider, IDisposab
 
         try
         {
-            _hubConnection.On("SendAction", new Action<string, int, List<string>>(SendActionHandler));
-            _hubConnection.On("SendMessage", new Action<MessagePayload>(SendMessageHandler));
-
             await _hubConnection.StartAsync();
             
             _state.StateEnum = SignalRStateEnum.Initialized;
@@ -103,36 +105,7 @@ public sealed class SignalRStateManager : AuthenticationStateProvider, IDisposab
         }
     }
 
-    private void SendActionHandler(string _, int count, List<string> names)
-    {
-        _state.Count = count;
-        _state.Names = names;
-    }
-
-    private void SendMessageHandler(MessagePayload payload)
-    {
-        _state.StateEnum |= SignalRStateEnum.Receiving;   
-        
-        var isValid = _payloadEncryptionService.PayloadIsValid(_state.UserInfo!.Password, payload.Token);
-        
-        // If message is valid then decrypt, otherwise don't bother
-        if (isValid)
-        {
-            payload = _payloadEncryptionService.DecryptPayload(_state.UserInfo!.Password, payload);
-        }
-
-        _state.Messages.AddFirst((payload, isValid));
-
-        // To make sure it list doesn't get too large and consume a lot of memory
-        if (_state.Messages.Count > 15)
-        {
-            _state.Messages.RemoveLast();
-        }
-
-        _state.StateEnum &= ~SignalRStateEnum.Receiving;
-    }
-
-    public async Task Login(LoginViewModel? login)
+    public async Task Login(LoginViewModel login)
     {
         while (!_hubConnection.State.HasFlag(HubConnectionState.Connected))
         {
@@ -143,7 +116,7 @@ public sealed class SignalRStateManager : AuthenticationStateProvider, IDisposab
         
         _sessionStorageService.SetItem(SESSION_KEY, login);
         
-        await _hubConnection.SendAsync("WhoAmi", login!.Name);
+        await _server.Join(login.Channel, login.Name);
         
         NotifyAuthenticationStateChanged(GetAuthenticationStateAsync());
     }
@@ -171,7 +144,7 @@ public sealed class SignalRStateManager : AuthenticationStateProvider, IDisposab
         
         _state.StateEnum |= SignalRStateEnum.Sending;
 
-        await _hubConnection.SendAsync("Send", _payloadEncryptionService.EncryptPayload(_state.UserInfo!.Password, messagePayload));
+        await _server.Send(_payloadEncryptionService.EncryptPayload(_state.UserInfo!.Password, messagePayload));
 
         _state.StateEnum &= ~SignalRStateEnum.Sending;
     }
@@ -193,5 +166,37 @@ public sealed class SignalRStateManager : AuthenticationStateProvider, IDisposab
     public void Dispose()
     {
         _state.PropertyChanged -= StateChangedHandler;
+    }
+
+    public Task Inbox(MessagePayload messagePayload)
+    {
+        _state.StateEnum |= SignalRStateEnum.Receiving;   
+        
+        var isValid = _payloadEncryptionService.PayloadIsValid(_state.UserInfo!.Password, messagePayload.Token);
+        
+        // If message is valid then decrypt, otherwise don't bother
+        if (isValid)
+        {
+            messagePayload = _payloadEncryptionService.DecryptPayload(_state.UserInfo!.Password, messagePayload);
+        }
+
+        _state.Messages.AddFirst((messagePayload, isValid));
+
+        // To make sure it list doesn't get too large and consume a lot of memory
+        if (_state.Messages.Count > 15)
+        {
+            _state.Messages.RemoveLast();
+        }
+
+        _state.StateEnum &= ~SignalRStateEnum.Receiving;
+
+        return Task.CompletedTask;
+    }
+
+    public Task Status(MessageTypeEnum messageTypeEnum, List<string> names)
+    {
+        _state.Names = names;
+
+        return Task.CompletedTask;
     }
 }
