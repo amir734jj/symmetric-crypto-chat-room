@@ -9,7 +9,7 @@
 
 <PageTitle>Login </PageTitle>
 
-<div class="mt-3">
+<div class="mt-3 mb-3">
     <h3>Login to secure chatroom</h3>
     <p>
         Your <code>password</code> is not shared, both encryption and decryption (<code>AES-256-CTR</code> with
@@ -20,9 +20,9 @@
         <DataAnnotationsValidator/>
     
         <HxFormState>
-            <HxInputText Label="Name" @bind-Value="@_model.Name" Placeholder="Enter your name here" Hint="Name you want to use in the chat"/>
+            <HxInputText Label="Name" @bind-Value="@_model.Name" Placeholder="Enter your name here" Hint="Name you want to use in the chat (public information)"/>
 
-            <HxInputText Label="Channel" @bind-Value="@_model.Channel" Placeholder="Enter channel name here" Hint="Name of the channel want to join"/>
+            <HxInputText Label="Channel" @bind-Value="@_model.Channel" Placeholder="Enter channel name here" Hint="Name of the channel want to join (public information)"/>
 
             <HxInputText Label="Password" @bind-Value="@_model.Password" Placeholder="Enter password here" Hint="Password (at least 3 characters long)" Type="InputType.Password"/>
     
