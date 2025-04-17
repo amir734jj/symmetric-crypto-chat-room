@@ -2,7 +2,7 @@
 
 [![Docker Hub badge][dockerhub-badge]][dockerhub]
 
-Simple secure chat room web (+ file transfer) application using SignalR (dotnet core) and Angular.js for front-end and most importantly:
+Simple secure chat room web (+ file transfer) application using SignalR (dotnet core) and Blazor for front-end and most importantly:
 - `SHA-256` to hash the given password
 - `AES-256-CTR` to encrypt/decrypt the messages
 
