@@ -14,6 +14,6 @@ namespace Models.ViewModels
 
         [Required(ErrorMessage = "Enter channel.")]
         [StringLength(50, MinimumLength = 3)]
-        public string Channel { get; set; }
+        public string Channel { get; set; } = "public";
     }
 }
