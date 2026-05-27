@@ -1,4 +1,4 @@
-## SymmetricCryptoChatRoom ([URL](http://hesamian.myddns.me:5000/))
+## SymmetricCryptoChatRoom
 
 [![Docker Hub badge][dockerhub-badge]][dockerhub]
 
