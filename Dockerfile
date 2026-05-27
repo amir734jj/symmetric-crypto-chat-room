@@ -20,6 +20,9 @@ RUN cp -rpf /app/UI/out/wwwroot /app/API/out
 # Build runtime image
 FROM mcr.microsoft.com/dotnet/aspnet:8.0-alpine
 
+ENV ASPNETCORE_URLS=http://+:80
+EXPOSE 80
+
 WORKDIR /app
 COPY --from=build-env "/app/API/out" .
 ENTRYPOINT ["dotnet", "API.dll"]
