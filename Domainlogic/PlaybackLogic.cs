@@ -50,6 +50,7 @@ public sealed class PlaybackLogic : IDisposable
 
     public void Dispose()
     {
+        _cleanupTaskCancellationToken?.Cancel();
         _cleanupTaskCancellationToken?.Dispose();
     }
 }
