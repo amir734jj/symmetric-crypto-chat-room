@@ -1,4 +1,5 @@
-﻿using ByteSizeLib;
+﻿using System;
+using ByteSizeLib;
 using Domainlogic;
 using LiteDB;
 using Microsoft.AspNetCore.Builder;
@@ -34,7 +35,7 @@ public class Startup
     public void ConfigureServices(IServiceCollection services)
     {
         services.AddCors(options => options.AddPolicy("CorsPolicy", builder => builder
-            .WithOrigins(_configuration.GetSection("TrustedSpaUrls").Get<string[]>())
+            .WithOrigins(_configuration.GetSection("TrustedSpaUrls").Get<string[]>() ?? Array.Empty<string>())
             .AllowAnyHeader()
             .AllowAnyMethod()
             .AllowCredentials()));
