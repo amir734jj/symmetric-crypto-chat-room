@@ -32,7 +32,7 @@ public sealed class PlaybackLogic : IDisposable
                 _collection.Delete(messagePayload.Id);
             }
 
-            await Task.Delay(TimeSpan.FromMinutes(1));
+            await Task.Delay(TimeSpan.FromMinutes(1), _cleanupTaskCancellationToken.Token);
         }
     }
 

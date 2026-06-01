@@ -20,7 +20,9 @@ RUN cp -rpf /app/UI/out/wwwroot /app/API/out
 # Build runtime image
 FROM mcr.microsoft.com/dotnet/aspnet:8.0-alpine
 
-ENV ASPNETCORE_URLS=http://+:3000
+ENV DOTNET_SYSTEM_GLOBALIZATION_INVARIANT=1 \
+    DOTNET_EnableDiagnostics=0 \
+    ASPNETCORE_URLS=http://+:3000
 EXPOSE 3000
 
 WORKDIR /app
