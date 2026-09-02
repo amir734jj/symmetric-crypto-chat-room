@@ -27,7 +27,7 @@ Microphone access requires a secure browser context. Use a trusted HTTPS certifi
 
 #### Coolify with Docker Compose
 
-Create a Docker Compose resource in Coolify and select `/compose.yaml`. The `SERVICE_FQDN_CHAT_3000` marker makes Coolify recognize `chat` as an application service routed to container port `3000`; assign `https://chat.coolify.hesamian.com` to that service in the Domains panel. The separate `turn` service has no HTTP domain; its coturn ports are published directly by Compose.
+Create a Docker Compose resource in Coolify and select `/docker-compose.yaml`. The `SERVICE_FQDN_CHAT_3000` marker makes Coolify recognize `chat` as an application service routed to container port `3000`; assign `https://chat.coolify.hesamian.com` to that service in the Domains panel. The separate `turn` service has no HTTP domain; its coturn ports are published directly by Compose.
 
 Set these environment variables in Coolify:
 
