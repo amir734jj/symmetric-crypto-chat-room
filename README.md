@@ -27,7 +27,9 @@ Microphone access requires a secure browser context. Use a trusted HTTPS certifi
 
 #### Coolify with Docker Compose
 
-Create a Docker Compose resource in Coolify and select `/docker-compose.yaml`. The `SERVICE_FQDN_CHAT_3000` marker makes Coolify recognize `chat` as an application service routed to container port `3000`; assign `https://chat.coolify.hesamian.com` to that service in the Domains panel. The separate `turn` service has no HTTP domain; its coturn ports are published directly by Compose.
+Create a Docker Compose resource in Coolify and select `/docker-compose.yaml`. The `SERVICE_FQDN_CHAT_3000` marker makes Coolify recognize `chat` as an application service routed to container port `3000`. Keep `https://chat.coolify.hesamian.com:3000` on the `chat` service in the Domains panel; the `:3000` suffix tells Coolify which container port to proxy and is not part of the public browser URL.
+
+Do not add `turn.coolify.hesamian.com` to Coolify's Domains panel. That panel creates HTTP/HTTPS routes, but STUN/TURN is not HTTP. Remove any `https://turn.coolify.hesamian.com:3478` entries from Coolify. The `turn` service is exposed directly by the Compose `ports` mappings.
 
 Set these environment variables in Coolify:
 
@@ -38,7 +40,7 @@ TURN_REALM=chat.coolify.hesamian.com
 TURN_SECRET=replace-with-a-long-random-secret
 ```
 
-Create a DNS-only `A` record for `turn.coolify.hesamian.com` pointing to the value of `TURN_EXTERNAL_IP`. When using Cloudflare, do not proxy this record. Allow TCP/UDP 3478 and UDP 49160-49200 in the server provider's firewall.
+Create a DNS-only `A` record at your DNS provider for `turn.coolify.hesamian.com`, pointing to the value of `TURN_EXTERNAL_IP`. When using Cloudflare, set it to DNS only. Allow TCP/UDP 3478 and UDP 49160-49200 in the server provider's firewall.
 
 ### Screenshots
 

@@ -1,0 +1,9 @@
+**/bin/
+**/obj/
+.git/
+.github/
+.idea/
+.vs/
+.vscode/
+*.litedb
+screenshots/
