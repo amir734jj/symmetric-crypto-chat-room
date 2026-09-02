@@ -9,9 +9,10 @@ services:
     expose:
       - "3000"
     environment:
-      ASPNETCORE_URLS: http://+:3000
-      TURN_HOST: ${TURN_HOST:-turn.coolify.hesamian.com}
-      TURN_SECRET: ${TURN_SECRET:-}
+      - SERVICE_FQDN_CHAT_3000
+      - ASPNETCORE_URLS=http://+:3000
+      - TURN_HOST=${TURN_HOST:-turn.coolify.hesamian.com}
+      - TURN_SECRET=${TURN_SECRET:-}
     healthcheck:
       test: ["CMD", "wget", "--spider", "--quiet", "http://127.0.0.1:3000/health"]
       interval: 15s
