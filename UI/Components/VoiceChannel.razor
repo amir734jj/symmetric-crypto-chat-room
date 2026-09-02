@@ -1,0 +1,201 @@
+@using Models
+@inject SignalRStateManager SignalRStateManager
+@inject IJSRuntime Js
+@implements IAsyncDisposable
+
+<section class="voice-channel mb-3" aria-label="Voice channel">
+    <div>
+        <strong>Voice channel</strong>
+        @if (_joined)
+        {
+            <span class="ms-2 text-muted">@(_participantIds.Count + 1) connected</span>
+        }
+    </div>
+
+    <div class="voice-channel-actions">
+        @if (!_joined)
+        {
+            <HxButton Color="ThemeColor.Success" Enabled="@(!_busy)" OnClick="Join">
+                Join voice
+            </HxButton>
+        }
+        else
+        {
+            <HxButton Color="ThemeColor.Secondary" OnClick="ToggleMute">
+                @(_muted ? "Unmute" : "Mute")
+            </HxButton>
+            <HxButton Color="ThemeColor.Danger" OnClick="Leave">
+                Leave voice
+            </HxButton>
+        }
+    </div>
+
+    @if (!string.IsNullOrWhiteSpace(_error))
+    {
+        <div class="text-danger mt-2" role="alert">@_error</div>
+    }
+
+    <div @ref="_remoteAudioContainer"></div>
+</section>
+
+@code {
+    private readonly HashSet<string> _participantIds = [];
+    private DotNetObjectReference<VoiceChannel>? _reference;
+    private IJSObjectReference? _module;
+    private ElementReference _remoteAudioContainer;
+    private bool _joined;
+    private bool _muted;
+    private bool _busy;
+    private string? _error;
+
+    protected override void OnInitialized()
+    {
+        SignalRStateManager.VoiceOfferReceived += ReceiveVoiceOffer;
+        SignalRStateManager.VoiceAnswerReceived += ReceiveVoiceAnswer;
+        SignalRStateManager.VoiceIceCandidateReceived += ReceiveVoiceIceCandidate;
+        SignalRStateManager.VoiceParticipantLeftReceived += VoiceParticipantLeft;
+    }
+
+    private async Task Join()
+    {
+        _busy = true;
+        _error = null;
+
+        try
+        {
+            _module ??= await Js.InvokeAsync<IJSObjectReference>("import", "./js/voice-chat.js");
+            _reference ??= DotNetObjectReference.Create(this);
+
+            var turnCredentials = await SignalRStateManager.GetTurnCredentials();
+            await _module.InvokeVoidAsync("initialize", _reference, _remoteAudioContainer, turnCredentials);
+
+            var participants = await SignalRStateManager.JoinVoice();
+            _joined = true;
+            _participantIds.UnionWith(participants.Select(participant => participant.ConnectionId));
+            await _module.InvokeVoidAsync(
+                "connectToParticipants",
+                participants.Select(participant => participant.ConnectionId).ToArray());
+        }
+        catch (Exception exception)
+        {
+            _error = $"Unable to join voice: {exception.Message}";
+            if (_joined)
+            {
+                await SignalRStateManager.LeaveVoice();
+            }
+            await CleanupBrowserVoice();
+        }
+        finally
+        {
+            _busy = false;
+        }
+    }
+
+    private async Task ToggleMute()
+    {
+        _muted = !_muted;
+        await _module!.InvokeVoidAsync("setMuted", _muted);
+    }
+
+    private async Task Leave()
+    {
+        await SignalRStateManager.LeaveVoice();
+        await CleanupBrowserVoice();
+    }
+
+    private Task ReceiveVoiceOffer(string senderConnectionId, string offer)
+    {
+        return InvokeAsync(async () =>
+        {
+            if (!_joined || _module == null) return;
+            _participantIds.Add(senderConnectionId);
+            await _module.InvokeVoidAsync("receiveOffer", senderConnectionId, offer);
+            StateHasChanged();
+        });
+    }
+
+    private Task ReceiveVoiceAnswer(string senderConnectionId, string answer)
+    {
+        return InvokeAsync(async () =>
+        {
+            if (_module != null)
+            {
+                await _module.InvokeVoidAsync("receiveAnswer", senderConnectionId, answer);
+            }
+        });
+    }
+
+    private Task ReceiveVoiceIceCandidate(string senderConnectionId, string candidate)
+    {
+        return InvokeAsync(async () =>
+        {
+            if (_module != null)
+            {
+                await _module.InvokeVoidAsync("receiveIceCandidate", senderConnectionId, candidate);
+            }
+        });
+    }
+
+    private Task VoiceParticipantLeft(string connectionId)
+    {
+        return InvokeAsync(async () =>
+        {
+            _participantIds.Remove(connectionId);
+            if (_module != null)
+            {
+                await _module.InvokeVoidAsync("removeParticipant", connectionId);
+            }
+            StateHasChanged();
+        });
+    }
+
+    [JSInvokable]
+    public Task SendVoiceOffer(string targetConnectionId, string offer)
+    {
+        return SignalRStateManager.SendVoiceOffer(targetConnectionId, offer);
+    }
+
+    [JSInvokable]
+    public Task SendVoiceAnswer(string targetConnectionId, string answer)
+    {
+        return SignalRStateManager.SendVoiceAnswer(targetConnectionId, answer);
+    }
+
+    [JSInvokable]
+    public Task SendVoiceIceCandidate(string targetConnectionId, string candidate)
+    {
+        return SignalRStateManager.SendVoiceIceCandidate(targetConnectionId, candidate);
+    }
+
+    private async Task CleanupBrowserVoice()
+    {
+        if (_module != null)
+        {
+            await _module.InvokeVoidAsync("leave");
+        }
+
+        _participantIds.Clear();
+        _joined = false;
+        _muted = false;
+    }
+
+    public async ValueTask DisposeAsync()
+    {
+        SignalRStateManager.VoiceOfferReceived -= ReceiveVoiceOffer;
+        SignalRStateManager.VoiceAnswerReceived -= ReceiveVoiceAnswer;
+        SignalRStateManager.VoiceIceCandidateReceived -= ReceiveVoiceIceCandidate;
+        SignalRStateManager.VoiceParticipantLeftReceived -= VoiceParticipantLeft;
+
+        if (_joined)
+        {
+            await SignalRStateManager.LeaveVoice();
+        }
+
+        await CleanupBrowserVoice();
+        if (_module != null)
+        {
+            await _module.DisposeAsync();
+        }
+        _reference?.Dispose();
+    }
+}

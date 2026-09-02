@@ -1,0 +1,6 @@
+<Solution>
+  <Project Path="API/API.csproj" />
+  <Project Path="Domainlogic/Domainlogic.csproj" />
+  <Project Path="Models/Models.csproj" />
+  <Project Path="UI/UI.csproj" />
+</Solution>

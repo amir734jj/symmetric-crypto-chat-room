@@ -16,6 +16,11 @@ namespace UI;
 
 public sealed class SignalRStateManager : AuthenticationStateProvider, IDisposable, ITypedClient
 {
+    public event Func<string, string, Task>? VoiceOfferReceived;
+    public event Func<string, string, Task>? VoiceAnswerReceived;
+    public event Func<string, string, Task>? VoiceIceCandidateReceived;
+    public event Func<string, Task>? VoiceParticipantLeftReceived;
+
     private readonly ISyncSessionStorageService _sessionStorageService;
     
     private readonly PayloadEncryptionService _payloadEncryptionService;
@@ -153,6 +158,36 @@ public sealed class SignalRStateManager : AuthenticationStateProvider, IDisposab
         _state.StateEnum &= ~SignalRStateEnum.Sending;
     }
 
+    public Task<List<VoiceParticipant>> JoinVoice()
+    {
+        return _server.JoinVoice();
+    }
+
+    public Task<TurnCredentials> GetTurnCredentials()
+    {
+        return _server.GetTurnCredentials();
+    }
+
+    public Task LeaveVoice()
+    {
+        return _server.LeaveVoice();
+    }
+
+    public Task SendVoiceOffer(string targetConnectionId, string offer)
+    {
+        return _server.SendVoiceOffer(targetConnectionId, offer);
+    }
+
+    public Task SendVoiceAnswer(string targetConnectionId, string answer)
+    {
+        return _server.SendVoiceAnswer(targetConnectionId, answer);
+    }
+
+    public Task SendVoiceIceCandidate(string targetConnectionId, string candidate)
+    {
+        return _server.SendVoiceIceCandidate(targetConnectionId, candidate);
+    }
+
     public override Task<AuthenticationState> GetAuthenticationStateAsync()
     {
         var identity = new ClaimsIdentity();
@@ -202,5 +237,25 @@ public sealed class SignalRStateManager : AuthenticationStateProvider, IDisposab
         _state.Names = names;
 
         return Task.CompletedTask;
+    }
+
+    public Task VoiceParticipantLeft(string connectionId)
+    {
+        return VoiceParticipantLeftReceived?.Invoke(connectionId) ?? Task.CompletedTask;
+    }
+
+    public Task ReceiveVoiceOffer(string senderConnectionId, string offer)
+    {
+        return VoiceOfferReceived?.Invoke(senderConnectionId, offer) ?? Task.CompletedTask;
+    }
+
+    public Task ReceiveVoiceAnswer(string senderConnectionId, string answer)
+    {
+        return VoiceAnswerReceived?.Invoke(senderConnectionId, answer) ?? Task.CompletedTask;
+    }
+
+    public Task ReceiveVoiceIceCandidate(string senderConnectionId, string candidate)
+    {
+        return VoiceIceCandidateReceived?.Invoke(senderConnectionId, candidate) ?? Task.CompletedTask;
     }
 }
