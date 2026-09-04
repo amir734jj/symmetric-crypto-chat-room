@@ -39,27 +39,35 @@ pre {
 }
 
 .voice-channel {
-    align-items: center;
     background: #f4f7f5;
     border: 1px solid #cbd5cf;
     border-radius: 6px;
-    display: flex;
-    justify-content: space-between;
     padding: 0.75rem;
+}
+
+.voice-channel-header {
+    align-items: center;
+    display: flex;
+    gap: 1rem;
+    justify-content: space-between;
+}
+
+.voice-channel-title {
+    flex: 0 0 auto;
 }
 
 .voice-channel-actions {
     display: flex;
     flex-wrap: wrap;
     gap: 0.5rem;
+    justify-content: flex-end;
 }
 
 .voice-health-message {
-    flex-basis: 100%;
+    overflow-wrap: anywhere;
 }
 
 .voice-debug {
-    flex-basis: 100%;
     min-width: 0;
 }
 
@@ -84,14 +92,14 @@ pre {
     white-space: pre-wrap;
 }
 
-.voice-channel:has(.voice-debug) {
-    flex-wrap: wrap;
-}
-
 @media (max-width: 575px) {
-    .voice-channel {
+    .voice-channel-header {
         align-items: stretch;
         flex-direction: column;
         gap: 0.75rem;
+    }
+
+    .voice-channel-actions {
+        justify-content: flex-start;
     }
 }

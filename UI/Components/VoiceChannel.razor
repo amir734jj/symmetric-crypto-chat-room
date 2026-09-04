@@ -6,36 +6,38 @@
 @implements IAsyncDisposable
 
 <section class="voice-channel mb-3" aria-label="Voice channel">
-    <div>
-        <strong>Voice channel</strong>
-        @if (_joined)
-        {
-            <span class="ms-2 text-muted">@(_participantIds.Count + 1) connected</span>
-        }
-    </div>
+    <div class="voice-channel-header">
+        <div class="voice-channel-title">
+            <strong>Voice channel</strong>
+            @if (_joined)
+            {
+                <span class="ms-2 text-muted">@(_participantIds.Count + 1) connected</span>
+            }
+        </div>
 
-    <div class="voice-channel-actions">
-        <HxButton Color="@TurnHealthColor" Enabled="@(!_checkingTurn)" OnClick="CheckTurnHealth">
-            @TurnHealthButtonText
-        </HxButton>
-        @if (!_joined)
-        {
-            <HxButton Color="ThemeColor.Success" Enabled="@(!_busy)" OnClick="Join">
-                Join voice
+        <div class="voice-channel-actions">
+            <HxButton Color="@TurnHealthColor" Enabled="@(!_checkingTurn)" OnClick="CheckTurnHealth">
+                @TurnHealthButtonText
             </HxButton>
-        }
-        else
-        {
-            <HxButton Color="ThemeColor.Secondary" OnClick="ToggleMute">
-                @(_muted ? "Unmute" : "Mute")
-            </HxButton>
-            <HxButton Color="ThemeColor.Secondary" OnClick="ShowDebug">
-                ICE debug
-            </HxButton>
-            <HxButton Color="ThemeColor.Danger" OnClick="Leave">
-                Leave voice
-            </HxButton>
-        }
+            @if (!_joined)
+            {
+                <HxButton Color="ThemeColor.Success" Enabled="@(!_busy)" OnClick="Join">
+                    Join voice
+                </HxButton>
+            }
+            else
+            {
+                <HxButton Color="ThemeColor.Secondary" OnClick="ToggleMute">
+                    @(_muted ? "Unmute" : "Mute")
+                </HxButton>
+                <HxButton Color="ThemeColor.Secondary" OnClick="ShowDebug">
+                    ICE debug
+                </HxButton>
+                <HxButton Color="ThemeColor.Danger" OnClick="Leave">
+                    Leave voice
+                </HxButton>
+            }
+        </div>
     </div>
 
     @if (!string.IsNullOrWhiteSpace(_error))
