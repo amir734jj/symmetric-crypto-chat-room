@@ -2,6 +2,7 @@
 @using Microsoft.AspNetCore.Authorization
 @using Microsoft.AspNetCore.Components.Forms
 @using Models
+@using Models.Constants
 @using UI.Extensions
 @using BlazorDownloadFile
 @using ByteSizeLib
@@ -26,6 +27,8 @@
         Note that <code>password</code> is never sent via a socket, You are responsible to exchange the symmetric key
         <br/>
         Active users (@(State.Names.Count)): @(string.Join(", ", State.Names))
+        <br/>
+        Encrypted messages and files are cached on the server for @ChatConstants.MessageRetentionMinutes minutes for chat playback.
     </p>
 
     <div class="row">

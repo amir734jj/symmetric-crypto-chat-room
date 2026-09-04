@@ -5,6 +5,7 @@ using System.Threading;
 using System.Threading.Tasks;
 using LiteDB;
 using Models;
+using Models.Constants;
 
 namespace Domainlogic;
 
@@ -43,7 +44,7 @@ public sealed class PlaybackLogic : IDisposable
 
     public void RecordMessage(MessagePayload message)
     {
-        message.Expiration = DateTimeOffset.Now.AddMinutes(10);
+        message.Expiration = DateTimeOffset.Now.AddMinutes(ChatConstants.MessageRetentionMinutes);
             
         _collection.Insert(message);
     }
