@@ -59,7 +59,8 @@ public class Startup
             c.EnableDetailedErrors = true;
         });
 
-        services.AddSingleton<ILiteDatabase>(new LiteDatabase("db.litedb"));
+        services.AddSingleton<ILiteDatabase>(new LiteDatabase(
+            _configuration["DATABASE_PATH"] ?? "db.litedb"));
         services.AddSingleton<PlaybackLogic>();
     }
 

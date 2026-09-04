@@ -9,6 +9,10 @@ namespace Models.Hub
 
         Task Join(string channel, string name);
 
+        Task Rejoin(string channel, string name);
+
+        Task Leave();
+
         Task<List<VoiceParticipant>> JoinVoice();
 
         Task<TurnCredentials> GetTurnCredentials();

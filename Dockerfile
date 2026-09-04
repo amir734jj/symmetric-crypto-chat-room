@@ -22,5 +22,9 @@ EXPOSE 3000
 
 WORKDIR /app
 COPY --from=build /out/api .
+RUN mkdir -p /app/data && chown -R $APP_UID /app
+
+ENV DATABASE_PATH=/app/data/db.litedb
+USER $APP_UID
 
 ENTRYPOINT ["dotnet", "API.dll"]

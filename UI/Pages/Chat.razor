@@ -189,9 +189,9 @@
         State.PropertyChanged += OnChangeHandler;
     }
 
-    private void LogoutHandler()
+    private async Task LogoutHandler()
     {
-        SignalRStateManager.Logout();
+        await SignalRStateManager.Logout();
 
         Navigation.NavigateTo("/");
     }

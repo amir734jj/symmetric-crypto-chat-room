@@ -54,6 +54,19 @@
         SignalRStateManager.VoiceAnswerReceived += ReceiveVoiceAnswer;
         SignalRStateManager.VoiceIceCandidateReceived += ReceiveVoiceIceCandidate;
         SignalRStateManager.VoiceParticipantLeftReceived += VoiceParticipantLeft;
+        SignalRStateManager.ConnectionReconnected += ConnectionReconnected;
+    }
+
+    private Task ConnectionReconnected()
+    {
+        return InvokeAsync(async () =>
+        {
+            if (!_joined) return;
+
+            await CleanupBrowserVoice();
+            await Join();
+            StateHasChanged();
+        });
     }
 
     private async Task Join()
@@ -185,6 +198,7 @@
         SignalRStateManager.VoiceAnswerReceived -= ReceiveVoiceAnswer;
         SignalRStateManager.VoiceIceCandidateReceived -= ReceiveVoiceIceCandidate;
         SignalRStateManager.VoiceParticipantLeftReceived -= VoiceParticipantLeft;
+        SignalRStateManager.ConnectionReconnected -= ConnectionReconnected;
 
         if (_joined)
         {

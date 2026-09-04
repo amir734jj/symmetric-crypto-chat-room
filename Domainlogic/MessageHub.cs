@@ -31,19 +31,7 @@ namespace Domainlogic
 
         public override async Task OnDisconnectedAsync(Exception ex)
         {
-            if (Users.TryGetValue(Context.ConnectionId, out var userInfo))
-            {
-                if (VoiceUsers.TryRemove(Context.ConnectionId, out _))
-                {
-                    await Clients.Group(userInfo.Channel).VoiceParticipantLeft(Context.ConnectionId);
-                }
-
-                await Groups.RemoveFromGroupAsync(Context.ConnectionId, userInfo.Channel);
-
-                Users.Remove(Context.ConnectionId, out _);
-            
-                await NotifyAll(userInfo.Channel, MessageTypeEnum.Left);
-            }
+            await Leave();
         }
 
         public async Task Send(MessagePayload message)
@@ -69,16 +57,44 @@ namespace Domainlogic
         
         public async Task Join(string channel, string name)
         {
-            await Groups.AddToGroupAsync(Context.ConnectionId, channel);
+            await JoinRoom(channel, name);
 
-            Users.TryAdd(Context.ConnectionId, (channel, name));
-            
-            await NotifyAll(channel, MessageTypeEnum.Joined);
-            
             foreach (var messagePayload in _playbackLogic.GetMessages(channel))
             {
                 await Clients.Client(Context.ConnectionId).Inbox(messagePayload);
             }
+        }
+
+        public Task Rejoin(string channel, string name)
+        {
+            return JoinRoom(channel, name);
+        }
+
+        private async Task JoinRoom(string channel, string name)
+        {
+            await Leave();
+
+            await Groups.AddToGroupAsync(Context.ConnectionId, channel);
+
+            Users[Context.ConnectionId] = (channel, name);
+            
+            await NotifyAll(channel, MessageTypeEnum.Joined);
+        }
+
+        public async Task Leave()
+        {
+            if (!Users.TryRemove(Context.ConnectionId, out var userInfo))
+            {
+                return;
+            }
+
+            if (VoiceUsers.TryRemove(Context.ConnectionId, out _))
+            {
+                await Clients.Group(userInfo.Channel).VoiceParticipantLeft(Context.ConnectionId);
+            }
+
+            await Groups.RemoveFromGroupAsync(Context.ConnectionId, userInfo.Channel);
+            await NotifyAll(userInfo.Channel, MessageTypeEnum.Left);
         }
 
         public Task<List<VoiceParticipant>> JoinVoice()

@@ -20,6 +20,7 @@ public sealed class SignalRStateManager : AuthenticationStateProvider, IDisposab
     public event Func<string, string, Task>? VoiceAnswerReceived;
     public event Func<string, string, Task>? VoiceIceCandidateReceived;
     public event Func<string, Task>? VoiceParticipantLeftReceived;
+    public event Func<Task>? ConnectionReconnected;
 
     private readonly ISyncSessionStorageService _sessionStorageService;
     
@@ -61,6 +62,19 @@ public sealed class SignalRStateManager : AuthenticationStateProvider, IDisposab
         
         _server = hubConnection.CreateHubProxy<ITypedServer>();
         hubConnection.Register<ITypedClient>(this);
+        hubConnection.Reconnected += HubConnectionReconnected;
+    }
+
+    private async Task HubConnectionReconnected(string? connectionId)
+    {
+        if (_state.UserInfo != null)
+        {
+            await _server.Rejoin(_state.UserInfo.Channel, _state.UserInfo.Name);
+            if (ConnectionReconnected != null)
+            {
+                await ConnectionReconnected.Invoke();
+            }
+        }
     }
 
     private void StateChangedHandler(object? source, PropertyChangedEventArgs eventArgs)
@@ -135,9 +149,16 @@ public sealed class SignalRStateManager : AuthenticationStateProvider, IDisposab
         return _state.UserInfo != null;
     }
 
-    public void Logout()
+    public async Task Logout()
     {
+        if (_hubConnection.State == HubConnectionState.Connected)
+        {
+            await _server.Leave();
+        }
+
         _state.UserInfo = null;
+        _state.Names = [];
+        _state.Messages.Clear();
         
         _sessionStorageService.RemoveItem(SESSION_KEY);
 
@@ -152,10 +173,14 @@ public sealed class SignalRStateManager : AuthenticationStateProvider, IDisposab
         }
         
         _state.StateEnum |= SignalRStateEnum.Sending;
-
-        await _server.Send(_payloadEncryptionService.EncryptPayload(_state.UserInfo!.Password, messagePayload));
-
-        _state.StateEnum &= ~SignalRStateEnum.Sending;
+        try
+        {
+            await _server.Send(_payloadEncryptionService.EncryptPayload(_state.UserInfo!.Password, messagePayload));
+        }
+        finally
+        {
+            _state.StateEnum &= ~SignalRStateEnum.Sending;
+        }
     }
 
     public Task<List<VoiceParticipant>> JoinVoice()
@@ -205,6 +230,7 @@ public sealed class SignalRStateManager : AuthenticationStateProvider, IDisposab
     public void Dispose()
     {
         _state.PropertyChanged -= StateChangedHandler;
+        _hubConnection.Reconnected -= HubConnectionReconnected;
     }
 
     public Task Inbox(MessagePayload messagePayload)

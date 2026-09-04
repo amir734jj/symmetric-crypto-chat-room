@@ -11,8 +11,11 @@ services:
     environment:
       - SERVICE_FQDN_CHAT_3000
       - ASPNETCORE_URLS=http://+:3000
-      - TURN_HOST=${TURN_HOST:-turn.coolify.hesamian.com}
-      - TURN_SECRET=${TURN_SECRET:-}
+      - TURN_HOST=${TURN_HOST:-}
+      - TURN_SECRET=${TURN_SECRET:?TURN_SECRET must be set}
+      - DATABASE_PATH=/app/data/db.litedb
+    volumes:
+      - chat-data:/app/data
     healthcheck:
       test: ["CMD", "wget", "--spider", "--quiet", "http://127.0.0.1:3000/health"]
       interval: 15s
@@ -31,10 +34,13 @@ services:
       - --no-cli
       - --fingerprint
       - --use-auth-secret
-      - --static-auth-secret=${TURN_SECRET:-}
+      - --static-auth-secret=${TURN_SECRET:?TURN_SECRET must be set}
       - --realm=${TURN_REALM:-chat.coolify.hesamian.com}
-      - --external-ip=${TURN_EXTERNAL_IP:-}
+      - --external-ip=${TURN_EXTERNAL_IP:?TURN_EXTERNAL_IP must be set}
       - --listening-port=3478
       - --min-port=49160
       - --max-port=49200
       - --log-file=stdout
+
+volumes:
+  chat-data:
