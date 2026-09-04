@@ -192,6 +192,12 @@ function createPeer(connectionId) {
         sender.transform = new RTCRtpScriptTransform(
             encryptionWorker,
             { operation: "encrypt", key: voiceKey, senderId: localConnectionId });
+
+        const transceiver = connection.getTransceivers()
+            .find(candidate => candidate.sender === sender);
+        transceiver.receiver.transform = new RTCRtpScriptTransform(
+            encryptionWorker,
+            { operation: "decrypt", key: voiceKey, senderId: connectionId });
     }
 
     const audio = document.createElement("audio");
@@ -203,9 +209,6 @@ function createPeer(connectionId) {
     peers.set(connectionId, peer);
 
     connection.ontrack = event => {
-        event.receiver.transform = new RTCRtpScriptTransform(
-            encryptionWorker,
-            { operation: "decrypt", key: voiceKey, senderId: connectionId });
         audio.srcObject = event.streams[0];
     };
 
