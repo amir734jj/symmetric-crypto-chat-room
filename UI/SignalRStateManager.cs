@@ -193,6 +193,11 @@ public sealed class SignalRStateManager : AuthenticationStateProvider, IDisposab
         return _server.GetTurnCredentials();
     }
 
+    public Task<TurnHealthStatus> CheckTurnHealth()
+    {
+        return _server.CheckTurnHealth();
+    }
+
     public Task LeaveVoice()
     {
         return _server.LeaveVoice();

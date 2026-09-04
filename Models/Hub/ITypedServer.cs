@@ -17,6 +17,8 @@ namespace Models.Hub
 
         Task<TurnCredentials> GetTurnCredentials();
 
+        Task<TurnHealthStatus> CheckTurnHealth();
+
         Task LeaveVoice();
 
         Task SendVoiceOffer(string targetConnectionId, string offer);

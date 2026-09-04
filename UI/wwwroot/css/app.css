@@ -50,7 +50,12 @@ pre {
 
 .voice-channel-actions {
     display: flex;
+    flex-wrap: wrap;
     gap: 0.5rem;
+}
+
+.voice-health-message {
+    flex-basis: 100%;
 }
 
 .voice-debug {

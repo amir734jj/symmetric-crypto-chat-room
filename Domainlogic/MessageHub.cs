@@ -15,13 +15,16 @@ namespace Domainlogic
     {
         private readonly PlaybackLogic _playbackLogic;
 
+        private readonly TurnHealthChecker _turnHealthChecker;
+
         private static readonly ConcurrentDictionary<string, (string Channel, string Name)> Users = new();
 
         private static readonly ConcurrentDictionary<string, byte> VoiceUsers = new();
 
-        public MessageHub(PlaybackLogic playbackLogic)
+        public MessageHub(PlaybackLogic playbackLogic, TurnHealthChecker turnHealthChecker)
         {
             _playbackLogic = playbackLogic;
+            _turnHealthChecker = turnHealthChecker;
         }
         
         public override Task OnConnectedAsync()
@@ -139,6 +142,12 @@ namespace Domainlogic
                 Credential = credential,
                 RelayOnly = relayOnly
             });
+        }
+
+        public Task<TurnHealthStatus> CheckTurnHealth()
+        {
+            GetCurrentUser();
+            return _turnHealthChecker.CheckAsync();
         }
 
         public async Task LeaveVoice()

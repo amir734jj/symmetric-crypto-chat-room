@@ -62,6 +62,7 @@ public class Startup
         services.AddSingleton<ILiteDatabase>(new LiteDatabase(
             _configuration["DATABASE_PATH"] ?? "db.litedb"));
         services.AddSingleton<PlaybackLogic>();
+        services.AddSingleton<TurnHealthChecker>();
     }
 
     // This method gets called by the runtime. Use this method to configure the HTTP request pipeline.
