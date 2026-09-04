@@ -45,7 +45,7 @@
 
     @if (_turnHealth != null)
     {
-        <div class="@(\"voice-health-message mt-2 \" + (_turnHealth.Healthy ? \"text-success\" : \"text-danger\"))" role="status">
+        <div class="@TurnHealthMessageCssClass" role="status">
             @_turnHealth.Host:@_turnHealth.Port - @_turnHealth.Message
         </div>
     }
@@ -100,6 +100,10 @@
             { Healthy: false } => "STUN/TURN unavailable",
             _ => "Check STUN/TURN"
         };
+
+    private string TurnHealthMessageCssClass => _turnHealth?.Healthy == true
+        ? "voice-health-message mt-2 text-success"
+        : "voice-health-message mt-2 text-danger";
 
     protected override void OnInitialized()
     {
