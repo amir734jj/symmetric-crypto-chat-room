@@ -4,6 +4,7 @@ let localStream;
 let peerConfiguration;
 let encryptionWorker;
 let voiceKey;
+let localConnectionId;
 const peers = new Map();
 
 export async function initialize(reference, container, turnCredentials, passwordDerivedKey) {
@@ -14,6 +15,7 @@ export async function initialize(reference, container, turnCredentials, password
     dotNetReference = reference;
     remoteAudioContainer = container;
     voiceKey = passwordDerivedKey;
+    localConnectionId = turnCredentials.username.split(":", 2)[1];
     encryptionWorker = new Worker(new URL("./voice-crypto-worker.js", import.meta.url), { type: "module" });
 
     const host = turnCredentials.host || window.location.hostname;
@@ -143,7 +145,7 @@ export async function getConnectionDiagnostics() {
     return JSON.stringify({
         capturedAt: new Date().toISOString(),
         mediaEncryption: {
-            passwordEncryption: voiceKey ? "AES-256-GCM" : "disabled",
+            passwordEncryption: voiceKey ? "AES-256-CTR" : "disabled",
             webRtcTransportEncryption: "DTLS-SRTP"
         },
         iceTransportPolicy: peerConfiguration?.iceTransportPolicy,
@@ -175,6 +177,7 @@ export function leave() {
     localStream = undefined;
     dotNetReference = undefined;
     voiceKey = undefined;
+    localConnectionId = undefined;
     encryptionWorker?.terminate();
     encryptionWorker = undefined;
 }
@@ -188,7 +191,7 @@ function createPeer(connectionId) {
         const sender = connection.addTrack(track, localStream);
         sender.transform = new RTCRtpScriptTransform(
             encryptionWorker,
-            { operation: "encrypt", key: voiceKey });
+            { operation: "encrypt", key: voiceKey, senderId: localConnectionId });
     }
 
     const audio = document.createElement("audio");
@@ -202,7 +205,7 @@ function createPeer(connectionId) {
     connection.ontrack = event => {
         event.receiver.transform = new RTCRtpScriptTransform(
             encryptionWorker,
-            { operation: "decrypt", key: voiceKey });
+            { operation: "decrypt", key: voiceKey, senderId: connectionId });
         audio.srcObject = event.streams[0];
     };
 

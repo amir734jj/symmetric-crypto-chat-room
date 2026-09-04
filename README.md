@@ -17,7 +17,7 @@ Simple secure chat room web (+ file transfer) application using SignalR (dotnet 
 
 ### Self-hosted voice channel
 
-The chat application and coturn are deployed as separate Dockerfile-based services. The coturn image is maintained in the sibling `stun-turn-setup` repository. No public STUN/TURN service is configured. Encoded audio frames are encrypted and authenticated with AES-256-GCM using a PBKDF2 key derived from the channel name and shared chat password. WebRTC DTLS-SRTP adds a second transport-encryption layer.
+The chat application and coturn are deployed as separate Dockerfile-based services. The coturn image is maintained in the sibling `stun-turn-setup` repository. No public STUN/TURN service is configured. Encoded audio frames are encrypted with length-preserving AES-256-CTR using a PBKDF2 key derived from the channel name and shared chat password. WebRTC DTLS-SRTP authenticates and encrypts the media transport as a second protection layer.
 
 Password-encrypted voice requires a browser with `RTCRtpScriptTransform` support. The voice connection fails closed when encoded transforms are unavailable; it never sends voice protected only by WebRTC transport encryption.
 
