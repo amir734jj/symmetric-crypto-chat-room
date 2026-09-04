@@ -53,6 +53,36 @@ pre {
     gap: 0.5rem;
 }
 
+.voice-debug {
+    flex-basis: 100%;
+    min-width: 0;
+}
+
+.voice-debug-header {
+    align-items: center;
+    display: flex;
+    justify-content: space-between;
+}
+
+.voice-debug-header > div {
+    display: flex;
+    gap: 0.5rem;
+}
+
+.voice-debug pre {
+    background: #17211c;
+    border-radius: 4px;
+    color: #e3eee8;
+    max-height: 24rem;
+    overflow: auto;
+    padding: 0.75rem;
+    white-space: pre-wrap;
+}
+
+.voice-channel:has(.voice-debug) {
+    flex-wrap: wrap;
+}
+
 @media (max-width: 575px) {
     .voice-channel {
         align-items: stretch;

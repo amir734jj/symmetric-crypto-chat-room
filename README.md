@@ -17,7 +17,11 @@ Simple secure chat room web (+ file transfer) application using SignalR (dotnet 
 
 ### Self-hosted voice channel
 
-The Compose deployment runs a dedicated coturn WebRTC service next to the API. No public STUN/TURN service is used. Voice media is encrypted by WebRTC and travels directly between peers when possible, falling back to the self-hosted relay.
+The Compose deployment runs a dedicated coturn WebRTC service next to the API. No public STUN/TURN service is configured. Encoded audio frames are encrypted and authenticated with AES-256-GCM using a PBKDF2 key derived from the channel name and shared chat password. WebRTC DTLS-SRTP adds a second transport-encryption layer.
+
+Password-encrypted voice requires a browser with `RTCRtpScriptTransform` support. The voice connection fails closed when encoded transforms are unavailable; it never sends voice protected only by WebRTC transport encryption.
+
+`TURN_RELAY_ONLY` defaults to `true`. In this mode WebRTC uses `iceTransportPolicy: "relay"`, so voice fails instead of connecting directly when the configured coturn service is unavailable. Set it to `false` only when direct peer-to-peer paths through the configured STUN server are acceptable.
 
 Set `TURN_EXTERNAL_IP` to the Docker host's public IPv4 address. Also allow TCP/UDP 3478 and UDP 49160-49200 through the host firewall and network security rules. `TURN_HOST` may be set to the public DNS name clients should use; by default the browser uses the chat site's hostname.
 
@@ -38,9 +42,12 @@ TURN_HOST=turn.coolify.hesamian.com
 TURN_EXTERNAL_IP=203.0.113.10
 TURN_REALM=chat.coolify.hesamian.com
 TURN_SECRET=replace-with-a-long-random-secret
+TURN_RELAY_ONLY=true
 ```
 
 Create a DNS-only `A` record at your DNS provider for `turn.coolify.hesamian.com`, pointing to the value of `TURN_EXTERNAL_IP`. When using Cloudflare, set it to DNS only. Allow TCP/UDP 3478 and UDP 49160-49200 in the server provider's firewall.
+
+To verify relay routing in Chromium or Edge, open `chrome://webrtc-internals` or `edge://webrtc-internals` during a call and inspect the selected ICE candidate pair. The local candidate type must be `relay`, and its relay protocol/address must correspond to the configured `TURN_HOST`. With `TURN_RELAY_ONLY=true`, a non-relay candidate cannot be selected.
 
 ### Screenshots
 

@@ -129,12 +129,15 @@ namespace Domainlogic
             var username = $"{expires}:{Context.ConnectionId}";
             using var hmac = new HMACSHA1(Encoding.UTF8.GetBytes(secret));
             var credential = Convert.ToBase64String(hmac.ComputeHash(Encoding.UTF8.GetBytes(username)));
+            var relayOnlySetting = Environment.GetEnvironmentVariable("TURN_RELAY_ONLY");
+            var relayOnly = !bool.TryParse(relayOnlySetting, out var configuredRelayOnly) || configuredRelayOnly;
 
             return Task.FromResult(new TurnCredentials
             {
                 Host = Environment.GetEnvironmentVariable("TURN_HOST") ?? string.Empty,
                 Username = username,
-                Credential = credential
+                Credential = credential,
+                RelayOnly = relayOnly
             });
         }
 

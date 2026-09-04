@@ -1,5 +1,7 @@
 @using Models
 @inject SignalRStateManager SignalRStateManager
+@inject HashingUtility HashingUtility
+@inject State State
 @inject IJSRuntime Js
 @implements IAsyncDisposable
 
@@ -24,6 +26,9 @@
             <HxButton Color="ThemeColor.Secondary" OnClick="ToggleMute">
                 @(_muted ? "Unmute" : "Mute")
             </HxButton>
+            <HxButton Color="ThemeColor.Secondary" OnClick="ShowDebug">
+                ICE debug
+            </HxButton>
             <HxButton Color="ThemeColor.Danger" OnClick="Leave">
                 Leave voice
             </HxButton>
@@ -33,6 +38,24 @@
     @if (!string.IsNullOrWhiteSpace(_error))
     {
         <div class="text-danger mt-2" role="alert">@_error</div>
+    }
+
+    @if (_showDebug)
+    {
+        <div class="voice-debug mt-3">
+            <div class="voice-debug-header">
+                <strong>ICE connection details</strong>
+                <div>
+                    <HxButton Size="ButtonSize.Small" Color="ThemeColor.Secondary" OnClick="ShowDebug">
+                        Refresh
+                    </HxButton>
+                    <HxButton Size="ButtonSize.Small" Color="ThemeColor.Secondary" OnClick="HideDebug">
+                        Hide
+                    </HxButton>
+                </div>
+            </div>
+            <pre class="mt-2 mb-0">@_debugInfo</pre>
+        </div>
     }
 
     <div @ref="_remoteAudioContainer"></div>
@@ -46,7 +69,9 @@
     private bool _joined;
     private bool _muted;
     private bool _busy;
+    private bool _showDebug;
     private string? _error;
+    private string? _debugInfo;
 
     protected override void OnInitialized()
     {
@@ -80,7 +105,14 @@
             _reference ??= DotNetObjectReference.Create(this);
 
             var turnCredentials = await SignalRStateManager.GetTurnCredentials();
-            await _module.InvokeVoidAsync("initialize", _reference, _remoteAudioContainer, turnCredentials);
+            var userInfo = State.UserInfo ?? throw new InvalidOperationException("Chat session is not available");
+            var voiceKey = Convert.ToBase64String(HashingUtility.DeriveVoiceKey(userInfo.Password, userInfo.Channel));
+            await _module.InvokeVoidAsync(
+                "initialize",
+                _reference,
+                _remoteAudioContainer,
+                turnCredentials,
+                voiceKey);
 
             var participants = await SignalRStateManager.JoinVoice();
             _joined = true;
@@ -108,6 +140,19 @@
     {
         _muted = !_muted;
         await _module!.InvokeVoidAsync("setMuted", _muted);
+    }
+
+    private async Task ShowDebug()
+    {
+        if (_module == null) return;
+
+        _debugInfo = await _module.InvokeAsync<string>("getConnectionDiagnostics");
+        _showDebug = true;
+    }
+
+    private void HideDebug()
+    {
+        _showDebug = false;
     }
 
     private async Task Leave()
@@ -190,6 +235,8 @@
         _participantIds.Clear();
         _joined = false;
         _muted = false;
+        _showDebug = false;
+        _debugInfo = null;
     }
 
     public async ValueTask DisposeAsync()

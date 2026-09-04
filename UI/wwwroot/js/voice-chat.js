@@ -2,14 +2,23 @@ let dotNetReference;
 let remoteAudioContainer;
 let localStream;
 let peerConfiguration;
+let encryptionWorker;
+let voiceKey;
 const peers = new Map();
 
-export async function initialize(reference, container, turnCredentials) {
+export async function initialize(reference, container, turnCredentials, passwordDerivedKey) {
+    if (!("RTCRtpScriptTransform" in window)) {
+        throw new Error("This browser does not support password-encrypted WebRTC audio");
+    }
+
     dotNetReference = reference;
     remoteAudioContainer = container;
+    voiceKey = passwordDerivedKey;
+    encryptionWorker = new Worker(new URL("./voice-crypto-worker.js", import.meta.url), { type: "module" });
 
     const host = turnCredentials.host || window.location.hostname;
     peerConfiguration = {
+        iceTransportPolicy: turnCredentials.relayOnly ? "relay" : "all",
         iceServers: [
             { urls: [`stun:${host}:3478`] },
             {
@@ -84,6 +93,65 @@ export function setMuted(muted) {
     }
 }
 
+export async function getConnectionDiagnostics() {
+    const peerDiagnostics = await Promise.all(
+        [...peers.entries()].map(async ([connectionId, peer]) => {
+            const stats = await peer.connection.getStats();
+            const reports = new Map();
+            let selectedPair;
+
+            stats.forEach(report => reports.set(report.id, report));
+            stats.forEach(report => {
+                if (report.type === "transport" && report.selectedCandidatePairId) {
+                    selectedPair = reports.get(report.selectedCandidatePairId);
+                }
+            });
+
+            if (!selectedPair) {
+                stats.forEach(report => {
+                    if (report.type === "candidate-pair" && report.state === "succeeded" && report.nominated) {
+                        selectedPair = report;
+                    }
+                });
+            }
+
+            const localCandidate = selectedPair
+                ? sanitizeCandidate(reports.get(selectedPair.localCandidateId))
+                : null;
+            const remoteCandidate = selectedPair
+                ? sanitizeCandidate(reports.get(selectedPair.remoteCandidateId))
+                : null;
+
+            return {
+                connectionId,
+                connectionState: peer.connection.connectionState,
+                iceConnectionState: peer.connection.iceConnectionState,
+                signalingState: peer.connection.signalingState,
+                usingTurnRelay: localCandidate?.candidateType === "relay",
+                selectedCandidatePair: selectedPair ? {
+                    state: selectedPair.state,
+                    currentRoundTripTime: selectedPair.currentRoundTripTime,
+                    availableOutgoingBitrate: selectedPair.availableOutgoingBitrate,
+                    bytesSent: selectedPair.bytesSent,
+                    bytesReceived: selectedPair.bytesReceived,
+                    localCandidate,
+                    remoteCandidate
+                } : null
+            };
+        }));
+
+    return JSON.stringify({
+        capturedAt: new Date().toISOString(),
+        mediaEncryption: {
+            passwordEncryption: voiceKey ? "AES-256-GCM" : "disabled",
+            webRtcTransportEncryption: "DTLS-SRTP"
+        },
+        iceTransportPolicy: peerConfiguration?.iceTransportPolicy,
+        configuredIceServers: peerConfiguration?.iceServers.map(server => server.urls),
+        peerConnections: peerDiagnostics
+    }, null, 2);
+}
+
 export function removeParticipant(connectionId) {
     const peer = peers.get(connectionId);
     if (!peer) return;
@@ -106,6 +174,9 @@ export function leave() {
 
     localStream = undefined;
     dotNetReference = undefined;
+    voiceKey = undefined;
+    encryptionWorker?.terminate();
+    encryptionWorker = undefined;
 }
 
 function createPeer(connectionId) {
@@ -114,7 +185,10 @@ function createPeer(connectionId) {
 
     const connection = new RTCPeerConnection(peerConfiguration);
     for (const track of localStream.getTracks()) {
-        connection.addTrack(track, localStream);
+        const sender = connection.addTrack(track, localStream);
+        sender.transform = new RTCRtpScriptTransform(
+            encryptionWorker,
+            { operation: "encrypt", key: voiceKey });
     }
 
     const audio = document.createElement("audio");
@@ -126,6 +200,9 @@ function createPeer(connectionId) {
     peers.set(connectionId, peer);
 
     connection.ontrack = event => {
+        event.receiver.transform = new RTCRtpScriptTransform(
+            encryptionWorker,
+            { operation: "decrypt", key: voiceKey });
         audio.srcObject = event.streams[0];
     };
 
@@ -145,4 +222,18 @@ async function addPendingCandidates(peer) {
         await peer.connection.addIceCandidate(candidate);
     }
     peer.pendingCandidates.length = 0;
+}
+
+function sanitizeCandidate(candidate) {
+    if (!candidate) return null;
+
+    return {
+        candidateType: candidate.candidateType,
+        address: candidate.address,
+        port: candidate.port,
+        protocol: candidate.protocol,
+        relayProtocol: candidate.relayProtocol,
+        url: candidate.url,
+        networkType: candidate.networkType
+    };
 }

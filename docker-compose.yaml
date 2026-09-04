@@ -13,6 +13,7 @@ services:
       - ASPNETCORE_URLS=http://+:3000
       - TURN_HOST=${TURN_HOST:-}
       - TURN_SECRET=${TURN_SECRET:?TURN_SECRET must be set}
+      - TURN_RELAY_ONLY=${TURN_RELAY_ONLY:-true}
       - DATABASE_PATH=/app/data/db.litedb
     volumes:
       - chat-data:/app/data

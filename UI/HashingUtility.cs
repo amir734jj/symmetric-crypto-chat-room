@@ -1,3 +1,4 @@
+using System.Security.Cryptography;
 using System.Text;
 using Org.BouncyCastle.Crypto.Digests;
 
@@ -15,5 +16,15 @@ public class HashingUtility
         digest.DoFinal(keyBytes, 0);
 
         return keyBytes;
+    }
+
+    public byte[] DeriveVoiceKey(string password, string channel)
+    {
+        return Rfc2898DeriveBytes.Pbkdf2(
+            password,
+            Encoding.UTF8.GetBytes($"voice:{channel}"),
+            210_000,
+            HashAlgorithmName.SHA256,
+            32);
     }
 }
