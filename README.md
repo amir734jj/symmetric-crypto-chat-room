@@ -17,32 +17,38 @@ Simple secure chat room web (+ file transfer) application using SignalR (dotnet 
 
 ### Self-hosted voice channel
 
-The Compose deployment runs a dedicated coturn WebRTC service next to the API. No public STUN/TURN service is configured. Encoded audio frames are encrypted and authenticated with AES-256-GCM using a PBKDF2 key derived from the channel name and shared chat password. WebRTC DTLS-SRTP adds a second transport-encryption layer.
+The chat application and coturn are deployed as separate Dockerfile-based services. The coturn image is maintained in the sibling `stun-turn-setup` repository. No public STUN/TURN service is configured. Encoded audio frames are encrypted and authenticated with AES-256-GCM using a PBKDF2 key derived from the channel name and shared chat password. WebRTC DTLS-SRTP adds a second transport-encryption layer.
 
 Password-encrypted voice requires a browser with `RTCRtpScriptTransform` support. The voice connection fails closed when encoded transforms are unavailable; it never sends voice protected only by WebRTC transport encryption.
 
 `TURN_RELAY_ONLY` defaults to `true`. In this mode WebRTC uses `iceTransportPolicy: "relay"`, so voice fails instead of connecting directly when the configured coturn service is unavailable. Set it to `false` only when direct peer-to-peer paths through the configured STUN server are acceptable.
 
-Set `TURN_EXTERNAL_IP` to the Docker host's public IPv4 address. Also allow TCP/UDP 3478 and UDP 49160-49200 through the host firewall and network security rules. `TURN_HOST` may be set to the public DNS name clients should use; by default the browser uses the chat site's hostname.
+Set `TURN_EXTERNAL_IP` on the coturn service to its Docker host's public IPv4 address. Also publish and allow TCP/UDP 3478 and UDP 49160-49200 through the host firewall and network security rules. Set `TURN_HOST` on the chat service to the public DNS name clients should use.
 
 Set `TURN_SECRET` explicitly. The API uses it to issue short-lived credentials, and the coturn service uses the same value to validate them.
 
 Microphone access requires a secure browser context. Use a trusted HTTPS certificate in production, either at a reverse proxy on the same host or by configuring ASP.NET Core HTTPS and mounting the certificate into the container. Plain HTTP works only on `localhost` for browser media capture.
 
-#### Coolify with Docker Compose
+#### Coolify
 
-Create a Docker Compose resource in Coolify and select `/docker-compose.yaml`. The `SERVICE_FQDN_CHAT_3000` marker makes Coolify recognize `chat` as an application service routed to container port `3000`. Keep `https://chat.coolify.hesamian.com:3000` on the `chat` service in the Domains panel; the `:3000` suffix tells Coolify which container port to proxy and is not part of the public browser URL.
+Create a Dockerfile resource for this repository and route `chat.coolify.hesamian.com` to container port `3000`. Configure persistent storage at `/app/data` for LiteDB playback data.
 
-Do not add `turn.coolify.hesamian.com` to Coolify's Domains panel. That panel creates HTTP/HTTPS routes, but STUN/TURN is not HTTP. Remove any `https://turn.coolify.hesamian.com:3478` entries from Coolify. The `turn` service is exposed directly by the Compose `ports` mappings.
+Create a second Dockerfile resource from the `stun-turn-setup` repository. Do not add `turn.coolify.hesamian.com` to Coolify's Domains panel because STUN/TURN is not HTTP. Publish TCP/UDP 3478 and UDP 49160-49200 directly from the coturn container to the host.
 
-Set these environment variables in Coolify:
+Set these environment variables on the chat service:
 
 ```env
 TURN_HOST=turn.coolify.hesamian.com
-TURN_EXTERNAL_IP=203.0.113.10
-TURN_REALM=chat.coolify.hesamian.com
 TURN_SECRET=replace-with-a-long-random-secret
 TURN_RELAY_ONLY=true
+```
+
+Set these environment variables on the coturn service:
+
+```env
+TURN_EXTERNAL_IP=203.0.113.10
+TURN_REALM=chat.coolify.hesamian.com
+TURN_SECRET=replace-with-the-same-long-random-secret
 ```
 
 Create a DNS-only `A` record at your DNS provider for `turn.coolify.hesamian.com`, pointing to the value of `TURN_EXTERNAL_IP`. When using Cloudflare, set it to DNS only. Allow TCP/UDP 3478 and UDP 49160-49200 in the server provider's firewall.
