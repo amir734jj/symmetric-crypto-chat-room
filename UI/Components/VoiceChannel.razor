@@ -87,7 +87,7 @@
             _participantIds.UnionWith(participants.Select(participant => participant.ConnectionId));
             await _module.InvokeVoidAsync(
                 "connectToParticipants",
-                participants.Select(participant => participant.ConnectionId).ToArray());
+                (object)participants.Select(participant => participant.ConnectionId).ToArray());
         }
         catch (Exception exception)
         {
