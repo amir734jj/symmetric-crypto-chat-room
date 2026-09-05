@@ -14,6 +14,8 @@ let adaptationInProgress = false;
 let screenWakeLock;
 let selectedAudioOutputId = "";
 let audioOutputMode = "auto";
+let proximitySensor;
+let proximitySensorNear;
 const peers = new Map();
 const audioQualityProfiles = {
     low: { sampleRate: 16000, maxBitrate: 16000 },
@@ -54,7 +56,9 @@ export async function initialize(reference, container, turnCredentials, password
         audio: getAudioConstraints(),
         video: false
     });
-    setAudioSessionType("auto");
+    if ("audioSession" in navigator) {
+        setAudioOutputMode("auto");
+    }
     document.removeEventListener("visibilitychange", handleVisibilityChange);
     document.addEventListener("visibilitychange", handleVisibilityChange);
     await requestScreenWakeLock();
@@ -118,7 +122,7 @@ export function supportsAudioOutputSelection() {
 }
 
 export function usesAudioSessionOutputModes() {
-    return !supportsAudioOutputDevicePicker() && "audioSession" in navigator;
+    return "audioSession" in navigator;
 }
 
 export async function chooseAudioOutput() {
@@ -141,15 +145,17 @@ export function setAudioOutputMode(selectedMode) {
     const mode = ["auto", "speaker", "earpiece"].includes(selectedMode)
         ? selectedMode
         : "auto";
-    const sessionType = mode === "speaker"
-        ? "playback"
-        : mode === "earpiece" ? "play-and-record" : "auto";
+    stopProximityRouting();
+    audioOutputMode = mode;
 
-    if (!setAudioSessionType(sessionType)) {
+    if (!applyAudioOutputMode(mode)) {
         throw new Error("The browser could not change the audio route");
     }
 
-    audioOutputMode = mode;
+    if (mode === "auto") {
+        startProximityRouting();
+    }
+
     return mode;
 }
 
@@ -265,6 +271,9 @@ export async function getConnectionDiagnostics() {
             screenWakeLockSupported: "wakeLock" in navigator,
             screenWakeLockActive: Boolean(screenWakeLock && !screenWakeLock.released),
             communicationAudioSession: navigator.audioSession?.type ?? "unsupported",
+            proximitySensorSupported: "ProximitySensor" in window,
+            proximitySensorActive: Boolean(proximitySensor?.activated),
+            proximitySensorNear: proximitySensorNear ?? "unknown",
             audioOutputSelectionSupported: supportsAudioOutputSelection(),
             audioOutputMode,
             selectedAudioOutputId: selectedAudioOutputId || "default"
@@ -291,6 +300,7 @@ export function leave() {
     poorNetworkSamples = 0;
     document.removeEventListener("visibilitychange", handleVisibilityChange);
     releaseScreenWakeLock();
+    stopProximityRouting();
     setAudioSessionType("auto");
 
     for (const connectionId of [...peers.keys()]) {
@@ -349,6 +359,47 @@ function setAudioSessionType(type) {
         console.warn("Unable to configure the mobile audio session", error);
         return false;
     }
+}
+
+function applyAudioOutputMode(mode) {
+    const sessionType = mode === "speaker"
+        ? "playback"
+        : mode === "earpiece" ? "play-and-record" : "auto";
+    return setAudioSessionType(sessionType);
+}
+
+function startProximityRouting() {
+    if (!("ProximitySensor" in window) || audioOutputMode !== "auto") return;
+
+    try {
+        proximitySensor = new ProximitySensor({ frequency: 5 });
+        proximitySensor.onreading = () => {
+            if (audioOutputMode !== "auto" || proximitySensor.near === proximitySensorNear) return;
+
+            proximitySensorNear = proximitySensor.near;
+            applyAudioOutputMode(proximitySensorNear ? "earpiece" : "speaker");
+        };
+        proximitySensor.onerror = event => {
+            console.warn("Unable to use the proximity sensor for automatic audio routing", event.error);
+            stopProximityRouting();
+            applyAudioOutputMode("auto");
+        };
+        proximitySensor.start();
+    } catch (error) {
+        console.warn("Unable to start proximity-based audio routing", error);
+        stopProximityRouting();
+        applyAudioOutputMode("auto");
+    }
+}
+
+function stopProximityRouting() {
+    if (proximitySensor) {
+        proximitySensor.onreading = null;
+        proximitySensor.onerror = null;
+        proximitySensor.stop();
+    }
+    proximitySensor = undefined;
+    proximitySensorNear = undefined;
 }
 
 async function createPeer(connectionId) {

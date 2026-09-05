@@ -42,9 +42,9 @@
                         <label class="voice-quality">
                             <span>Audio output</span>
                             <select class="form-select form-select-sm" @bind="_audioOutputMode" @bind:after="AudioOutputModeChanged">
-                                <option value="auto">Auto</option>
-                                <option value="earpiece">Earpiece</option>
-                                <option value="speaker">Speaker</option>
+                                <option value="auto">Auto (proximity)</option>
+                                <option value="earpiece">Always earpiece</option>
+                                <option value="speaker">Always speaker</option>
                             </select>
                         </label>
                     }
@@ -318,7 +318,7 @@
             {
                 "speaker" => "Audio output: Speaker",
                 "earpiece" => "Audio output: Earpiece",
-                _ => "Audio output: Auto (phone proximity)"
+                _ => "Audio output: Auto (proximity when available)"
             };
             _error = null;
         }
