@@ -6,6 +6,11 @@ let encryptionWorker;
 let voiceKey;
 let localConnectionId;
 let audioQuality = "standard";
+let audioQualityMode = "auto";
+let adaptationTimer;
+let goodNetworkSamples = 0;
+let poorNetworkSamples = 0;
+let adaptationInProgress = false;
 const peers = new Map();
 const audioQualityProfiles = {
     low: { sampleRate: 16000, maxBitrate: 16000 },
@@ -22,7 +27,8 @@ export async function initialize(reference, container, turnCredentials, password
     remoteAudioContainer = container;
     voiceKey = passwordDerivedKey;
     localConnectionId = turnCredentials.username.split(":", 2)[1];
-    audioQuality = normalizeAudioQuality(selectedAudioQuality);
+    audioQualityMode = normalizeAudioQualityMode(selectedAudioQuality);
+    audioQuality = audioQualityMode === "auto" ? "standard" : audioQualityMode;
     encryptionWorker = new Worker(new URL("./voice-crypto-worker.js", import.meta.url), { type: "module" });
 
     const host = turnCredentials.host || window.location.hostname;
@@ -45,6 +51,8 @@ export async function initialize(reference, container, turnCredentials, password
         audio: getAudioConstraints(),
         video: false
     });
+    startQualityAdaptation();
+    notifyAudioQualityChanged();
 }
 
 export async function connectToParticipants(connectionIds) {
@@ -99,7 +107,16 @@ export function setMuted(muted) {
 }
 
 export async function setAudioQuality(selectedAudioQuality) {
-    audioQuality = normalizeAudioQuality(selectedAudioQuality);
+    audioQualityMode = normalizeAudioQualityMode(selectedAudioQuality);
+    goodNetworkSamples = 0;
+    poorNetworkSamples = 0;
+    await setEffectiveAudioQuality(audioQualityMode === "auto" ? "standard" : audioQualityMode);
+}
+
+async function setEffectiveAudioQuality(selectedAudioQuality) {
+    const normalizedQuality = normalizeAudioQuality(selectedAudioQuality);
+    const qualityChanged = audioQuality !== normalizedQuality;
+    audioQuality = normalizedQuality;
 
     if (localStream) {
         await Promise.all(localStream.getAudioTracks()
@@ -110,6 +127,10 @@ export async function setAudioQuality(selectedAudioQuality) {
         .flatMap(peer => peer.connection.getSenders())
         .filter(sender => sender.track?.kind === "audio")
         .map(applySenderAudioQuality));
+
+    if (qualityChanged) {
+        notifyAudioQualityChanged();
+    }
 }
 
 export async function getConnectionDiagnostics() {
@@ -165,6 +186,7 @@ export async function getConnectionDiagnostics() {
             passwordEncryption: voiceKey ? "AES-256-CTR" : "disabled",
             webRtcTransportEncryption: "DTLS-SRTP"
         },
+        audioQualityMode,
         audioQuality,
         audioMaxBitrate: audioQualityProfiles[audioQuality].maxBitrate,
         iceTransportPolicy: peerConfiguration?.iceTransportPolicy,
@@ -183,6 +205,11 @@ export function removeParticipant(connectionId) {
 }
 
 export function leave() {
+    clearInterval(adaptationTimer);
+    adaptationTimer = undefined;
+    goodNetworkSamples = 0;
+    poorNetworkSamples = 0;
+
     for (const connectionId of [...peers.keys()]) {
         removeParticipant(connectionId);
     }
@@ -270,6 +297,10 @@ function normalizeAudioQuality(value) {
     return value in audioQualityProfiles ? value : "standard";
 }
 
+function normalizeAudioQualityMode(value) {
+    return value === "auto" ? value : normalizeAudioQuality(value);
+}
+
 function getAudioConstraints() {
     return {
         channelCount: 1,
@@ -287,4 +318,72 @@ async function applySenderAudioQuality(sender) {
     }
     parameters.encodings[0].maxBitrate = audioQualityProfiles[audioQuality].maxBitrate;
     await sender.setParameters(parameters);
+}
+
+function startQualityAdaptation() {
+    clearInterval(adaptationTimer);
+    adaptationTimer = setInterval(adaptAudioQuality, 5000);
+}
+
+async function adaptAudioQuality() {
+    if (audioQualityMode !== "auto" || adaptationInProgress || peers.size === 0) return;
+
+    adaptationInProgress = true;
+    try {
+        const samples = await Promise.all([...peers.values()].map(getNetworkSample));
+        const usableSamples = samples.filter(sample => sample !== null);
+        if (usableSamples.length === 0) return;
+
+        const networkIsGood = usableSamples.every(sample =>
+            (sample.roundTripTime === undefined || sample.roundTripTime <= 0.15) &&
+            (sample.fractionLost === undefined || sample.fractionLost <= 0.02) &&
+            (sample.availableOutgoingBitrate === undefined || sample.availableOutgoingBitrate >= 128000));
+        const networkIsPoor = usableSamples.some(sample =>
+            (sample.roundTripTime !== undefined && sample.roundTripTime > 0.3) ||
+            (sample.fractionLost !== undefined && sample.fractionLost > 0.05) ||
+            (sample.availableOutgoingBitrate !== undefined && sample.availableOutgoingBitrate < 80000));
+
+        goodNetworkSamples = networkIsGood ? goodNetworkSamples + 1 : 0;
+        poorNetworkSamples = networkIsPoor ? poorNetworkSamples + 1 : 0;
+
+        if (audioQuality === "standard" && goodNetworkSamples >= 3) {
+            goodNetworkSamples = 0;
+            await setEffectiveAudioQuality("high");
+        } else if (audioQuality === "high" && poorNetworkSamples >= 2) {
+            poorNetworkSamples = 0;
+            await setEffectiveAudioQuality("standard");
+        }
+    } catch (error) {
+        console.warn("Unable to adapt audio quality", error);
+    } finally {
+        adaptationInProgress = false;
+    }
+}
+
+async function getNetworkSample(peer) {
+    if (peer.connection.connectionState !== "connected") return null;
+
+    const stats = await peer.connection.getStats();
+    let selectedPair;
+    let remoteInboundAudio;
+
+    stats.forEach(report => {
+        if (report.type === "candidate-pair" && report.state === "succeeded" && report.nominated) {
+            selectedPair = report;
+        } else if (report.type === "remote-inbound-rtp" && (report.kind === "audio" || report.mediaType === "audio")) {
+            remoteInboundAudio = report;
+        }
+    });
+
+    const sample = {
+        roundTripTime: remoteInboundAudio?.roundTripTime ?? selectedPair?.currentRoundTripTime,
+        fractionLost: remoteInboundAudio?.fractionLost,
+        availableOutgoingBitrate: selectedPair?.availableOutgoingBitrate
+    };
+
+    return Object.values(sample).some(value => value !== undefined) ? sample : null;
+}
+
+function notifyAudioQualityChanged() {
+    dotNetReference?.invokeMethodAsync("AudioQualityAdapted", audioQuality).catch(() => {});
 }

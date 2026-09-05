@@ -18,8 +18,9 @@
             <label class="voice-quality">
                 <span>Audio quality</span>
                 <select class="form-select form-select-sm" @bind="_audioQuality" @bind:after="AudioQualityChanged" disabled="@_busy">
+                    <option value="auto">Auto (@AudioQualityLabel(_effectiveAudioQuality))</option>
                     <option value="low">Low</option>
-                    <option value="standard">Standard</option>
+                    <option value="standard">Medium</option>
                     <option value="high">High</option>
                 </select>
             </label>
@@ -140,7 +141,8 @@
     private string? _incomingCallerConnectionId;
     private string? _incomingCallerName;
     private string? _callStatus;
-    private string _audioQuality = "standard";
+    private string _audioQuality = "auto";
+    private string _effectiveAudioQuality = "standard";
     private TurnHealthStatus? _turnHealth;
 
     private IEnumerable<OnlineUser> OtherOnlineUsers => State.OnlineUsers
@@ -427,6 +429,26 @@
     public Task SendVoiceIceCandidate(string targetConnectionId, string candidate)
     {
         return SignalRStateManager.SendVoiceIceCandidate(targetConnectionId, candidate);
+    }
+
+    [JSInvokable]
+    public Task AudioQualityAdapted(string quality)
+    {
+        return InvokeAsync(() =>
+        {
+            _effectiveAudioQuality = quality;
+            StateHasChanged();
+        });
+    }
+
+    private static string AudioQualityLabel(string quality)
+    {
+        return quality switch
+        {
+            "low" => "Low",
+            "high" => "High",
+            _ => "Medium"
+        };
     }
 
     private async Task CleanupBrowserVoice()
