@@ -134,6 +134,7 @@
 </section>
 
 @code {
+    private static readonly TimeSpan RingTimeout = TimeSpan.FromSeconds(30);
     private readonly HashSet<string> _participantIds = [];
     private DotNetObjectReference<VoiceChannel>? _reference;
     private IJSObjectReference? _module;
@@ -150,6 +151,7 @@
     private string? _incomingCallerName;
     private string? _outgoingCallConnectionId;
     private string? _outgoingCallName;
+    private CancellationTokenSource? _outgoingCallTimeoutCancellation;
     private string? _callStatus;
     private string _audioQuality = "auto";
     private string _effectiveAudioQuality = "standard";
@@ -274,7 +276,8 @@
             await SignalRStateManager.RingVoice(user.ConnectionId);
             _outgoingCallConnectionId = user.ConnectionId;
             _outgoingCallName = user.Name;
-            _callStatus = $"Ringing {user.Name}...";
+            _callStatus = $"Ringing {user.Name}... (30 seconds)";
+            StartOutgoingCallTimeout(user.ConnectionId, user.Name);
         }
         catch (Exception exception)
         {
@@ -289,9 +292,57 @@
         if (targetConnectionId == null) return;
 
         await SignalRStateManager.CancelVoiceCall(targetConnectionId);
+        ClearOutgoingCall();
+        _callStatus = targetName == null ? "Call cancelled" : $"Stopped ringing {targetName}";
+    }
+
+    private void StartOutgoingCallTimeout(string targetConnectionId, string targetName)
+    {
+        _outgoingCallTimeoutCancellation?.Cancel();
+        _outgoingCallTimeoutCancellation?.Dispose();
+        _outgoingCallTimeoutCancellation = new CancellationTokenSource();
+        _ = StopRingingAfterTimeout(targetConnectionId, targetName, _outgoingCallTimeoutCancellation.Token);
+    }
+
+    private async Task StopRingingAfterTimeout(
+        string targetConnectionId,
+        string targetName,
+        CancellationToken cancellationToken)
+    {
+        try
+        {
+            await Task.Delay(RingTimeout, cancellationToken);
+            await InvokeAsync(async () =>
+            {
+                if (_outgoingCallConnectionId != targetConnectionId) return;
+
+                await SignalRStateManager.CancelVoiceCall(targetConnectionId);
+                ClearOutgoingCall();
+                _callStatus = $"{targetName} did not answer";
+                StateHasChanged();
+            });
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+        }
+        catch (Exception exception)
+        {
+            await InvokeAsync(() =>
+            {
+                ClearOutgoingCall();
+                _error = $"Unable to cancel unanswered call: {exception.Message}";
+                StateHasChanged();
+            });
+        }
+    }
+
+    private void ClearOutgoingCall()
+    {
+        _outgoingCallTimeoutCancellation?.Cancel();
+        _outgoingCallTimeoutCancellation?.Dispose();
+        _outgoingCallTimeoutCancellation = null;
         _outgoingCallConnectionId = null;
         _outgoingCallName = null;
-        _callStatus = targetName == null ? "Call cancelled" : $"Stopped ringing {targetName}";
     }
 
     private Task VoiceCallReceived(string callerConnectionId, string callerName)
@@ -326,8 +377,7 @@
         {
             if (_outgoingCallConnectionId != responderConnectionId) return;
 
-            _outgoingCallConnectionId = null;
-            _outgoingCallName = null;
+            ClearOutgoingCall();
             _callStatus = accepted
                 ? $"{responderName} accepted the call"
                 : $"{responderName} declined the call";
@@ -517,6 +567,7 @@
 
     public async ValueTask DisposeAsync()
     {
+        ClearOutgoingCall();
         SignalRStateManager.VoiceOfferReceived -= ReceiveVoiceOffer;
         SignalRStateManager.VoiceAnswerReceived -= ReceiveVoiceAnswer;
         SignalRStateManager.VoiceIceCandidateReceived -= ReceiveVoiceIceCandidate;
