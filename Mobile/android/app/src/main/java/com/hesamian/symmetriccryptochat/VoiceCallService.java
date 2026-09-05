@@ -178,22 +178,7 @@ public class VoiceCallService extends Service {
 
     private void updateForegroundNotification() {
         Notification notification = createStatusNotification();
-        try {
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
-                int serviceType = ServiceInfo.FOREGROUND_SERVICE_TYPE_REMOTE_MESSAGING;
-                if (callActive) {
-                    serviceType |= ServiceInfo.FOREGROUND_SERVICE_TYPE_MICROPHONE;
-                }
-                startForeground(STATUS_NOTIFICATION_ID, notification, serviceType);
-            } else if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q && callActive) {
-                startForeground(STATUS_NOTIFICATION_ID, notification, ServiceInfo.FOREGROUND_SERVICE_TYPE_MICROPHONE);
-            } else {
-                startForeground(STATUS_NOTIFICATION_ID, notification);
-            }
-        } catch (RuntimeException exception) {
-            Log.e(TAG, "Unable to enable foreground microphone mode; keeping the call listener active", exception);
-            startListenerForegroundOrStop(notification);
-        }
+        startListenerForegroundOrStop(notification);
     }
 
     private void startListenerForegroundOrStop(Notification notification) {

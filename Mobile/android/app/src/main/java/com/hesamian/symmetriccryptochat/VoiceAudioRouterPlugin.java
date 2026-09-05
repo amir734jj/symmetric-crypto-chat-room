@@ -176,8 +176,8 @@ public class VoiceAudioRouterPlugin extends Plugin implements SensorEventListene
             routeTo(isNear
                 ? AudioDeviceInfo.TYPE_BUILTIN_EARPIECE
                 : AudioDeviceInfo.TYPE_BUILTIN_SPEAKER);
-        } catch (IllegalStateException exception) {
-            android.util.Log.w("VoiceAudioRouter", "Unable to apply proximity audio route", exception);
+        } catch (RuntimeException exception) {
+            Log.w(TAG, "Unable to apply proximity audio route", exception);
             stopProximityRouting();
         }
     }
