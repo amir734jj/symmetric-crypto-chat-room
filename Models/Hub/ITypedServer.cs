@@ -11,6 +11,10 @@ namespace Models.Hub
 
         Task Rejoin(string channel, string name, string clientInstanceId);
 
+        Task RegisterBackground(string channel, string name, string clientInstanceId);
+
+        Task UnregisterBackground();
+
         Task Leave();
 
         Task<List<VoiceParticipant>> JoinVoice();

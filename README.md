@@ -42,7 +42,11 @@ Microphone access requires a secure browser context. Use a trusted HTTPS certifi
 
 The `Mobile` Capacitor project packages the deployed web application in an Android WebView and adds native speaker, earpiece, and proximity-based routing. Auto mode preserves wired or Bluetooth communication devices and otherwise switches between the built-in earpiece and speaker using the phone's proximity sensor.
 
-An active Android voice call runs with a microphone foreground service and an ongoing notification, allowing the call to continue when the app is minimized. Swiping the app away or leaving voice stops the service and ends background operation. This does not receive new calls after Android has suspended or killed the app; reliable wake-up for new incoming calls would require a push service, which is intentionally not configured.
+After login, Android securely caches the name, channel, password, and stable client identifier using an AES-GCM key held by Android Keystore. A native SignalR foreground service keeps the device registered when the WebView is minimized or closed, starts again after a device reboot, and displays a notification when someone calls. Opening that notification restores the cached session and transfers the pending call to the WebView for acceptance or rejection. The password remains on the device and is never sent through SignalR.
+
+This self-hosted approach does not use Google or another push provider. It requires a permanent **Ready for calls** notification, notification permission, and exemption from Android battery optimization, all requested after login. It consumes more battery than push messaging. Android force-stop disables all app services and boot receivers until the user manually opens the app again; no application can bypass that operating-system restriction.
+
+During an active call, the same service switches to Android's microphone foreground-service mode and keeps WebRTC running while the app is minimized. Leaving voice returns the service to its idle call-listener mode; logging out clears the encrypted native session and stops it entirely.
 
 Every push to `master` updates the single `latest` GitHub release and replaces its `symmetric-crypto-chat-latest.apk` asset. Without signing secrets, the workflow publishes a debug-signed APK. Configure all four repository secrets below to publish an upgradeable release-signed APK:
 

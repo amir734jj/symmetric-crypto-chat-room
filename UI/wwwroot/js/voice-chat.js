@@ -57,7 +57,7 @@ export async function initialize(reference, container, turnCredentials, password
         video: false
     });
     const nativeAudioRouter = getNativeAudioRouter();
-    if (nativeAudioRouter) {
+    if (typeof nativeAudioRouter?.startCall === "function") {
         await nativeAudioRouter.startCall();
     }
     if (nativeAudioRouter || "audioSession" in navigator) {
@@ -334,7 +334,9 @@ export async function leave() {
         console.warn("Unable to reset native audio routing", error);
     }
     try {
-        await nativeAudioRouter?.stopCall();
+        if (typeof nativeAudioRouter?.stopCall === "function") {
+            await nativeAudioRouter.stopCall();
+        }
     } catch (error) {
         console.warn("Unable to stop native background call handling", error);
     }
@@ -614,4 +616,32 @@ async function getNetworkSample(peer) {
 
 function notifyAudioQualityChanged() {
     dotNetReference?.invokeMethodAsync("AudioQualityAdapted", audioQuality).catch(() => {});
+}
+
+export async function registerBackgroundCalls(channel, name, password, clientInstanceId) {
+    const nativeAudioRouter = getNativeAudioRouter();
+    if (typeof nativeAudioRouter?.registerBackground !== "function") return false;
+
+    const result = await nativeAudioRouter.registerBackground({
+        serverUrl: new URL("/signalr", window.location.origin).toString(),
+        channel,
+        name,
+        password,
+        clientInstanceId
+    });
+    return result.notificationsEnabled;
+}
+
+export async function restoreBackgroundSession() {
+    const nativeAudioRouter = getNativeAudioRouter();
+    return typeof nativeAudioRouter?.restoreBackgroundSession === "function"
+        ? await nativeAudioRouter.restoreBackgroundSession()
+        : null;
+}
+
+export async function unregisterBackgroundCalls() {
+    const nativeAudioRouter = getNativeAudioRouter();
+    if (typeof nativeAudioRouter?.unregisterBackground === "function") {
+        await nativeAudioRouter.unregisterBackground();
+    }
 }

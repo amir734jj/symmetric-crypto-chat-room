@@ -230,6 +230,12 @@
         SignalRStateManager.VoiceCallRespondedEvent += VoiceCallResponded;
         SignalRStateManager.ConnectionReconnected += ConnectionReconnected;
         SignalRStateManager.PresenceChanged += PresenceChanged;
+
+        if (SignalRStateManager.PendingVoiceCall is { } pendingCall)
+        {
+            _incomingCallerConnectionId = pendingCall.CallerConnectionId;
+            _incomingCallerName = pendingCall.CallerName;
+        }
     }
 
     private Task PresenceChanged()
@@ -525,6 +531,10 @@
     private async Task ClearIncomingCall()
     {
         await StopRingtone();
+        if (_incomingCallerConnectionId != null)
+        {
+            SignalRStateManager.ClearPendingVoiceCall(_incomingCallerConnectionId);
+        }
         _incomingCallerConnectionId = null;
         _incomingCallerName = null;
     }
