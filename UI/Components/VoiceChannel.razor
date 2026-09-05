@@ -38,7 +38,7 @@
                 @if (_audioOutputSelectionSupported)
                 {
                     <HxButton Color="ThemeColor.Secondary" OnClick="ChooseAudioOutput">
-                        Audio output
+                        @AudioOutputButtonText
                     </HxButton>
                 }
                 <HxButton Color="ThemeColor.Secondary" OnClick="ToggleMute">
@@ -159,6 +159,8 @@
     private bool _checkingTurn;
     private bool _showDebug;
     private bool _audioOutputSelectionSupported;
+    private bool _usesAudioSessionOutputToggle;
+    private bool _usingSpeaker;
     private string? _error;
     private string? _debugInfo;
     private string? _incomingCallerConnectionId;
@@ -180,6 +182,10 @@
         { Healthy: false } => ThemeColor.Danger,
         _ => ThemeColor.Secondary
     };
+
+    private string AudioOutputButtonText => _usesAudioSessionOutputToggle
+        ? (_usingSpeaker ? "Use earpiece" : "Use speaker")
+        : "Choose output";
 
     private string TurnHealthButtonText => _checkingTurn
         ? "Checking STUN/TURN..."
@@ -245,6 +251,7 @@
                 voiceKey,
                 _audioQuality);
             _audioOutputSelectionSupported = await _module.InvokeAsync<bool>("supportsAudioOutputSelection");
+            _usesAudioSessionOutputToggle = await _module.InvokeAsync<bool>("usesAudioSessionOutputToggle");
 
             var participants = await SignalRStateManager.JoinVoice();
             _joined = true;
@@ -281,6 +288,10 @@
         try
         {
             var outputLabel = await _module.InvokeAsync<string>("chooseAudioOutput");
+            if (_usesAudioSessionOutputToggle)
+            {
+                _usingSpeaker = outputLabel == "Speaker";
+            }
             _callStatus = $"Audio output: {outputLabel}";
             _error = null;
         }
@@ -620,6 +631,8 @@
         _muted = false;
         _showDebug = false;
         _audioOutputSelectionSupported = false;
+        _usesAudioSessionOutputToggle = false;
+        _usingSpeaker = false;
         _debugInfo = null;
     }
 

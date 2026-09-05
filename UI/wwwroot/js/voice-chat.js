@@ -13,6 +13,7 @@ let poorNetworkSamples = 0;
 let adaptationInProgress = false;
 let screenWakeLock;
 let selectedAudioOutputId = "";
+let audioOutputMode = "earpiece";
 const peers = new Map();
 const audioQualityProfiles = {
     low: { sampleRate: 16000, maxBitrate: 16000 },
@@ -113,20 +114,38 @@ export function setMuted(muted) {
 }
 
 export function supportsAudioOutputSelection() {
-    return typeof navigator.mediaDevices.selectAudioOutput === "function" &&
-        typeof HTMLMediaElement.prototype.setSinkId === "function";
+    return supportsAudioOutputDevicePicker() || "audioSession" in navigator;
+}
+
+export function usesAudioSessionOutputToggle() {
+    return !supportsAudioOutputDevicePicker() && "audioSession" in navigator;
 }
 
 export async function chooseAudioOutput() {
-    if (!supportsAudioOutputSelection()) {
+    if (supportsAudioOutputDevicePicker()) {
+        const options = selectedAudioOutputId ? { deviceId: selectedAudioOutputId } : undefined;
+        const output = await navigator.mediaDevices.selectAudioOutput(options);
+        await Promise.all([...peers.values()].map(peer => peer.audio.setSinkId(output.deviceId)));
+        selectedAudioOutputId = output.deviceId;
+        return output.label || "Selected output";
+    }
+
+    if (!("audioSession" in navigator)) {
         throw new Error("Audio output selection is not supported by this browser");
     }
 
-    const options = selectedAudioOutputId ? { deviceId: selectedAudioOutputId } : undefined;
-    const output = await navigator.mediaDevices.selectAudioOutput(options);
-    await Promise.all([...peers.values()].map(peer => peer.audio.setSinkId(output.deviceId)));
-    selectedAudioOutputId = output.deviceId;
-    return output.label || "Selected output";
+    const useSpeaker = audioOutputMode !== "speaker";
+    if (!setAudioSessionType(useSpeaker ? "playback" : "play-and-record")) {
+        throw new Error("The browser could not change the audio route");
+    }
+
+    audioOutputMode = useSpeaker ? "speaker" : "earpiece";
+    return useSpeaker ? "Speaker" : "Earpiece";
+}
+
+function supportsAudioOutputDevicePicker() {
+    return typeof navigator.mediaDevices.selectAudioOutput === "function" &&
+        typeof HTMLMediaElement.prototype.setSinkId === "function";
 }
 
 export async function setAudioQuality(selectedAudioQuality) {
@@ -237,6 +256,7 @@ export async function getConnectionDiagnostics() {
             screenWakeLockActive: Boolean(screenWakeLock && !screenWakeLock.released),
             communicationAudioSession: navigator.audioSession?.type ?? "unsupported",
             audioOutputSelectionSupported: supportsAudioOutputSelection(),
+            audioOutputMode,
             selectedAudioOutputId: selectedAudioOutputId || "default"
         },
         iceTransportPolicy: peerConfiguration?.iceTransportPolicy,
@@ -278,6 +298,7 @@ export function leave() {
     voiceKey = undefined;
     localConnectionId = undefined;
     selectedAudioOutputId = "";
+    audioOutputMode = "earpiece";
     encryptionWorker?.terminate();
     encryptionWorker = undefined;
 }
@@ -309,12 +330,14 @@ function handleVisibilityChange() {
 }
 
 function setAudioSessionType(type) {
-    if (!navigator.audioSession) return;
+    if (!navigator.audioSession) return false;
 
     try {
         navigator.audioSession.type = type;
+        return navigator.audioSession.type === type;
     } catch (error) {
         console.warn("Unable to configure the mobile audio session", error);
+        return false;
     }
 }
 
