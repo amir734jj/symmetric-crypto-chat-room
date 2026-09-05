@@ -17,8 +17,8 @@
         <div class="voice-channel-actions">
             <label class="voice-quality">
                 <span>Audio quality</span>
-                <select class="form-select form-select-sm" @bind="_audioQuality" @bind:after="AudioQualityChanged" disabled="@_busy">
-                    <option value="auto">Auto (@AudioQualityLabel(_effectiveAudioQuality))</option>
+                <select @key="_effectiveAudioQuality" class="form-select form-select-sm" @bind="_audioQuality" @bind:after="AudioQualityChanged" disabled="@_busy">
+                    <option value="auto">Auto - Current: @AudioQualityLabel(_effectiveAudioQuality)</option>
                     <option value="low">Low</option>
                     <option value="standard">Medium</option>
                     <option value="high">High</option>
