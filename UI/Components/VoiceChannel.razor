@@ -42,7 +42,7 @@
                     ICE debug
                 </HxButton>
                 <HxButton Color="ThemeColor.Danger" OnClick="Leave">
-                    Leave voice
+                    @(_participantIds.Count > 0 ? "End call" : "Leave voice")
                 </HxButton>
             }
         </div>
