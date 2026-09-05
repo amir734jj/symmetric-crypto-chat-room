@@ -51,14 +51,24 @@
         <HxFormState>
             <HxInputTextArea Label="Message" @bind-Value="@_messagePayload.Message" Placeholder="Enter message here" Type="InputType.Text"/>
 
-            <HxInputFile @ref="_component" Label="File" OnChange="@(OnFileChange)" Multiple="@(true)" MaxFileSize="@((long)ByteSize.FromMegaBytes(25).Bytes)"/>
+            <HxInputFile @ref="_component" Label="File" OnChange="@(OnFileChange)" Multiple="@(true)" MaxFileSize="@MaxFileSize"/>
+
+            @if (_processingFiles)
+            {
+                <div class="text-muted mt-2" role="status">Preparing files...</div>
+            }
+
+            @if (!string.IsNullOrWhiteSpace(_fileError))
+            {
+                <div class="text-danger mt-2" role="alert">@_fileError</div>
+            }
 
             @if (_component != null && _messagePayload.Files != null && _messagePayload.Files.Any())
             {
                 <HxButton Text="Clear file" CssClass="mt-2" OnClick="@(async () => await ClearFileInput())" Color="ThemeColor.Secondary"/>
             }
 
-            <HxSubmit Color="ThemeColor.Success" Enabled="@(!State.StateEnum.HasFlag(SignalRStateEnum.Sending))">Send Message</HxSubmit>
+            <HxSubmit Color="ThemeColor.Success" Enabled="@(!_processingFiles && !State.StateEnum.HasFlag(SignalRStateEnum.Sending))">Send Message</HxSubmit>
         </HxFormState>
 
     </EditForm>
@@ -172,6 +182,8 @@
 </audio>
 
 @code {
+    private const long MaxFileSize = ChatConstants.MaxAttachmentBytes;
+
     private HxInputFile? _component;
 
     private MessagePayload _messagePayload = new();
@@ -181,6 +193,10 @@
     private bool _showState;
     
     private bool _showInvalid;
+
+    private bool _processingFiles;
+
+    private string? _fileError;
 
     protected override void OnInitialized()
     {
@@ -206,14 +222,31 @@
 
     private async Task OnFileChange(InputFileChangeEventArgs eventArgs)
     {
-        foreach (var file in eventArgs.GetMultipleFiles())
+        _fileError = null;
+        var files = eventArgs.GetMultipleFiles();
+        var totalSize = _messagePayload.Files.Sum(file => file.Data.LongLength) + files.Sum(file => file.Size);
+        if (totalSize > MaxFileSize)
         {
-            _messagePayload.Files.Add(new FilePayload
+            _fileError = "The combined attachment size cannot exceed 25 MB.";
+            return;
+        }
+
+        _processingFiles = true;
+        try
+        {
+            foreach (var file in files)
             {
-                Name = file.Name,
-                ContentType = file.ContentType,
-                Data = await file.OpenReadStream(int.MaxValue).ConvertToBase64(),
-            });
+                _messagePayload.Files.Add(new FilePayload
+                {
+                    Name = file.Name,
+                    ContentType = file.ContentType,
+                    Data = await file.OpenReadStream(MaxFileSize).ReadAllBytes(),
+                });
+            }
+        }
+        finally
+        {
+            _processingFiles = false;
         }
     }
 
@@ -266,6 +299,7 @@
         await _component?.ResetAsync()!;
 
         _messagePayload.Files = [];
+        _fileError = null;
     }
 
     void IDisposable.Dispose()

@@ -26,7 +26,9 @@ namespace Models
 
     public class FilePayload
     {
-        public string Data { get; set; }
+        public byte[] Data { get; set; } = Array.Empty<byte>();
+
+        public bool IsCompressed { get; set; }
         
         public string Name { get; set; }
         

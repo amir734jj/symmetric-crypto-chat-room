@@ -183,7 +183,7 @@ public sealed class SignalRStateManager : AuthenticationStateProvider, IDisposab
         _state.StateEnum |= SignalRStateEnum.Sending;
         try
         {
-            await _server.Send(_payloadEncryptionService.EncryptPayload(_state.UserInfo!.Password, messagePayload));
+            await _server.Send(await _payloadEncryptionService.EncryptPayloadAsync(_state.UserInfo!.Password, messagePayload));
         }
         finally
         {
@@ -256,7 +256,7 @@ public sealed class SignalRStateManager : AuthenticationStateProvider, IDisposab
         _hubConnection.Reconnected -= HubConnectionReconnected;
     }
 
-    public Task Inbox(MessagePayload messagePayload)
+    public async Task Inbox(MessagePayload messagePayload)
     {
         _state.StateEnum |= SignalRStateEnum.Receiving;   
         
@@ -265,7 +265,7 @@ public sealed class SignalRStateManager : AuthenticationStateProvider, IDisposab
         // If message is valid then decrypt, otherwise don't bother
         if (isValid)
         {
-            messagePayload = _payloadEncryptionService.DecryptPayload(_state.UserInfo!.Password, messagePayload);
+            messagePayload = await _payloadEncryptionService.DecryptPayloadAsync(_state.UserInfo!.Password, messagePayload);
         }
 
         _state.Messages.AddFirst((messagePayload, isValid));
@@ -278,7 +278,6 @@ public sealed class SignalRStateManager : AuthenticationStateProvider, IDisposab
 
         _state.StateEnum &= ~SignalRStateEnum.Receiving;
 
-        return Task.CompletedTask;
     }
 
     public Task Status(MessageTypeEnum messageTypeEnum, List<OnlineUser> users)
