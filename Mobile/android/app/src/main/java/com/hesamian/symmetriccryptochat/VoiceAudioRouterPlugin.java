@@ -42,7 +42,9 @@ public class VoiceAudioRouterPlugin extends Plugin implements SensorEventListene
         Context context = getContext();
         audioManager = (AudioManager) context.getSystemService(Context.AUDIO_SERVICE);
         sensorManager = (SensorManager) context.getSystemService(Context.SENSOR_SERVICE);
-        proximitySensor = sensorManager.getDefaultSensor(Sensor.TYPE_PROXIMITY);
+        proximitySensor = sensorManager == null
+            ? null
+            : sensorManager.getDefaultSensor(Sensor.TYPE_PROXIMITY);
     }
 
     @PluginMethod
@@ -85,7 +87,11 @@ public class VoiceAudioRouterPlugin extends Plugin implements SensorEventListene
 
     @PluginMethod
     public void reset(PluginCall call) {
-        resetRouting();
+        try {
+            resetRouting();
+        } catch (RuntimeException exception) {
+            Log.w(TAG, "Unable to reset native audio routing", exception);
+        }
         call.resolve();
     }
 
@@ -167,12 +173,14 @@ public class VoiceAudioRouterPlugin extends Plugin implements SensorEventListene
 
     @Override
     public void onSensorChanged(SensorEvent event) {
-        if (!routingMode.equals("auto") || hasExternalCommunicationDevice()) {
-            return;
-        }
-
-        boolean isNear = event.values[0] < proximitySensor.getMaximumRange();
         try {
+            Sensor activeSensor = proximitySensor;
+            if (!routingMode.equals("auto") || activeSensor == null ||
+                event.values.length == 0 || hasExternalCommunicationDevice()) {
+                return;
+            }
+
+            boolean isNear = event.values[0] < activeSensor.getMaximumRange();
             routeTo(isNear
                 ? AudioDeviceInfo.TYPE_BUILTIN_EARPIECE
                 : AudioDeviceInfo.TYPE_BUILTIN_SPEAKER);
@@ -188,7 +196,11 @@ public class VoiceAudioRouterPlugin extends Plugin implements SensorEventListene
 
     @Override
     protected void handleOnDestroy() {
-        resetRouting();
+        try {
+            resetRouting();
+        } catch (RuntimeException exception) {
+            Log.w(TAG, "Unable to reset audio routing while closing the app", exception);
+        }
     }
 
     private void beginRouting() {
@@ -200,7 +212,7 @@ public class VoiceAudioRouterPlugin extends Plugin implements SensorEventListene
     }
 
     private void startProximityRouting() {
-        if (proximitySensor != null) {
+        if (sensorManager != null && proximitySensor != null) {
             sensorManager.registerListener(this, proximitySensor, SensorManager.SENSOR_DELAY_NORMAL);
         }
     }
@@ -254,6 +266,9 @@ public class VoiceAudioRouterPlugin extends Plugin implements SensorEventListene
     }
 
     private boolean hasExternalCommunicationDevice() {
+        if (audioManager == null) {
+            return false;
+        }
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
             AudioDeviceInfo device = audioManager.getCommunicationDevice();
             return device != null && isExternalDevice(device.getType());

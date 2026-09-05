@@ -91,8 +91,15 @@ export async function connectToParticipants(connectionIds) {
 }
 
 export async function receiveOffer(senderConnectionId, offerJson) {
+    let offer;
+    try {
+        offer = JSON.parse(offerJson);
+    } catch (error) {
+        console.warn("Ignoring an invalid voice offer", error);
+        return;
+    }
     const peer = await createPeer(senderConnectionId);
-    await peer.connection.setRemoteDescription(JSON.parse(offerJson));
+    await peer.connection.setRemoteDescription(offer);
     await addPendingCandidates(peer);
 
     const answer = await peer.connection.createAnswer();
@@ -107,13 +114,23 @@ export async function receiveAnswer(senderConnectionId, answerJson) {
     const peer = peers.get(senderConnectionId);
     if (!peer) return;
 
-    await peer.connection.setRemoteDescription(JSON.parse(answerJson));
+    try {
+        await peer.connection.setRemoteDescription(JSON.parse(answerJson));
+    } catch (error) {
+        console.warn("Ignoring an invalid voice answer", error);
+    }
     await addPendingCandidates(peer);
 }
 
 export async function receiveIceCandidate(senderConnectionId, candidateJson) {
     const peer = await createPeer(senderConnectionId);
-    const candidate = JSON.parse(candidateJson);
+    let candidate;
+    try {
+        candidate = JSON.parse(candidateJson);
+    } catch (error) {
+        console.warn("Ignoring an invalid voice ICE candidate", error);
+        return;
+    }
 
     if (peer.connection.remoteDescription) {
         await peer.connection.addIceCandidate(candidate);
@@ -484,11 +501,14 @@ async function createPeer(connectionId) {
     };
 
     connection.onicecandidate = event => {
-        if (!event.candidate) return;
-        dotNetReference.invokeMethodAsync(
+        const reference = dotNetReference;
+        if (!event.candidate || !reference) return;
+        reference.invokeMethodAsync(
             "SendVoiceIceCandidate",
             connectionId,
-            JSON.stringify(event.candidate));
+            JSON.stringify(event.candidate)).catch(error => {
+                console.warn("Unable to send voice ICE candidate", error);
+            });
     };
 
     await Promise.all(audioSenders.map(applySenderAudioQuality));

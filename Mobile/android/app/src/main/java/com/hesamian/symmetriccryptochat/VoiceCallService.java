@@ -39,7 +39,7 @@ public class VoiceCallService extends Service {
     private BackgroundCallSession.Session session;
     private PowerManager.WakeLock wakeLock;
     private boolean callActive;
-    private boolean stopping;
+    private volatile boolean stopping;
     private int reconnectAttempts;
 
     public static void startListening(Context context) {
@@ -65,8 +65,12 @@ public class VoiceCallService extends Service {
     public void onCreate() {
         super.onCreate();
         serviceRunning = true;
-        createNotificationChannels();
-        acquireWakeLock();
+        try {
+            createNotificationChannels();
+            acquireWakeLock();
+        } catch (RuntimeException exception) {
+            Log.e(TAG, "Unable to initialize background call handling", exception);
+        }
     }
 
     @Override
@@ -106,9 +110,13 @@ public class VoiceCallService extends Service {
         releaseWakeLock();
         cancelIncomingCallNotification();
         if (hubConnection != null) {
-            hubConnection.stop().subscribe(
-                () -> { },
-                error -> Log.w(TAG, "Unable to stop background SignalR connection", error));
+            try {
+                hubConnection.stop().subscribe(
+                    () -> { },
+                    error -> Log.w(TAG, "Unable to stop background SignalR connection", error));
+            } catch (RuntimeException exception) {
+                Log.w(TAG, "Unable to stop background SignalR connection", exception);
+            }
         }
         super.onDestroy();
     }
@@ -160,20 +168,37 @@ public class VoiceCallService extends Service {
     }
 
     private void showIncomingCallNotification(String callerName) {
-        Notification notification = new NotificationCompat.Builder(this, INCOMING_CHANNEL_ID)
-            .setSmallIcon(R.drawable.ic_voice_call)
-            .setContentTitle(callerName + " is calling")
-            .setContentText("Tap to open Symmetric Crypto Chat")
-            .setContentIntent(createOpenAppIntent())
-            .setCategory(NotificationCompat.CATEGORY_CALL)
-            .setPriority(NotificationCompat.PRIORITY_HIGH)
-            .setAutoCancel(true)
-            .build();
-        getSystemService(NotificationManager.class).notify(INCOMING_NOTIFICATION_ID, notification);
+        if (stopping) {
+            return;
+        }
+        try {
+            Notification notification = new NotificationCompat.Builder(this, INCOMING_CHANNEL_ID)
+                .setSmallIcon(R.drawable.ic_voice_call)
+                .setContentTitle(callerName + " is calling")
+                .setContentText("Tap to open Symmetric Crypto Chat")
+                .setContentIntent(createOpenAppIntent())
+                .setCategory(NotificationCompat.CATEGORY_CALL)
+                .setPriority(NotificationCompat.PRIORITY_HIGH)
+                .setAutoCancel(true)
+                .build();
+            NotificationManager notificationManager = getSystemService(NotificationManager.class);
+            if (notificationManager != null) {
+                notificationManager.notify(INCOMING_NOTIFICATION_ID, notification);
+            }
+        } catch (RuntimeException exception) {
+            Log.e(TAG, "Unable to show incoming call notification", exception);
+        }
     }
 
     private void cancelIncomingCallNotification() {
-        getSystemService(NotificationManager.class).cancel(INCOMING_NOTIFICATION_ID);
+        try {
+            NotificationManager notificationManager = getSystemService(NotificationManager.class);
+            if (notificationManager != null) {
+                notificationManager.cancel(INCOMING_NOTIFICATION_ID);
+            }
+        } catch (RuntimeException exception) {
+            Log.w(TAG, "Unable to dismiss incoming call notification", exception);
+        }
     }
 
     private void updateForegroundNotification() {
@@ -207,6 +232,10 @@ public class VoiceCallService extends Service {
             return;
         }
         PowerManager powerManager = (PowerManager) getSystemService(Context.POWER_SERVICE);
+        if (powerManager == null) {
+            Log.w(TAG, "Power manager is unavailable; background calls may be suspended");
+            return;
+        }
         wakeLock = powerManager.newWakeLock(
             PowerManager.PARTIAL_WAKE_LOCK,
             getPackageName() + ":active-voice-call");
@@ -215,10 +244,15 @@ public class VoiceCallService extends Service {
     }
 
     private void releaseWakeLock() {
-        if (wakeLock != null && wakeLock.isHeld()) {
-            wakeLock.release();
+        try {
+            if (wakeLock != null && wakeLock.isHeld()) {
+                wakeLock.release();
+            }
+        } catch (RuntimeException exception) {
+            Log.w(TAG, "Unable to release background call wake lock", exception);
+        } finally {
+            wakeLock = null;
         }
-        wakeLock = null;
     }
 
     private synchronized void connect() {
@@ -227,38 +261,69 @@ public class VoiceCallService extends Service {
             return;
         }
 
-        if (hubConnection == null) {
-            hubConnection = HubConnectionBuilder.create(session.serverUrl).build();
-            hubConnection.setKeepAliveInterval(30000);
-            hubConnection.setServerTimeout(90000);
-            hubConnection.on(
-                "VoiceCallReceived",
-                (callerConnectionId, callerName) -> showIncomingCallNotification(callerName),
-                String.class,
-                String.class);
-            hubConnection.on(
-                "VoiceCallCancelled",
-                (callerConnectionId, timedOut) -> cancelIncomingCallNotification(),
-                String.class,
-                Boolean.class);
-            hubConnection.onClosed(error -> scheduleReconnect());
-        }
+        try {
+            if (hubConnection == null) {
+                hubConnection = HubConnectionBuilder.create(session.serverUrl).build();
+                hubConnection.setKeepAliveInterval(30000);
+                hubConnection.setServerTimeout(90000);
+                hubConnection.on(
+                    "VoiceCallReceived",
+                    (callerConnectionId, callerName) -> showIncomingCallNotification(callerName),
+                    String.class,
+                    String.class);
+                hubConnection.on(
+                    "VoiceCallCancelled",
+                    (callerConnectionId, timedOut) -> cancelIncomingCallNotification(),
+                    String.class,
+                    Boolean.class);
+                hubConnection.onClosed(error -> scheduleReconnect());
+            }
 
-        hubConnection.start().subscribe(
-            () -> hubConnection.invoke(
+            HubConnection activeConnection = hubConnection;
+            BackgroundCallSession.Session activeSession = session;
+            activeConnection.start().subscribe(
+                () -> registerBackground(activeConnection, activeSession),
+                error -> {
+                    Log.w(TAG, "Unable to connect background call endpoint", error);
+                    scheduleReconnect();
+                });
+        } catch (RuntimeException exception) {
+            Log.e(TAG, "Unable to create background SignalR connection", exception);
+            scheduleReconnect();
+        }
+    }
+
+    private void registerBackground(
+        HubConnection activeConnection,
+        BackgroundCallSession.Session activeSession) {
+        if (stopping || activeSession == null) {
+            return;
+        }
+        try {
+            activeConnection.invoke(
                 "RegisterBackground",
-                session.channel,
-                session.name,
-                session.clientInstanceId).subscribe(
+                activeSession.channel,
+                activeSession.name,
+                activeSession.clientInstanceId).subscribe(
                     () -> reconnectAttempts = 0,
                     error -> {
                         Log.w(TAG, "Unable to register background call endpoint", error);
-                        hubConnection.stop().subscribe();
-                    }),
-            error -> {
-                Log.w(TAG, "Unable to connect background call endpoint", error);
-                scheduleReconnect();
-            });
+                        stopConnection(activeConnection);
+                    });
+        } catch (RuntimeException exception) {
+            Log.e(TAG, "Unable to register background call endpoint", exception);
+            stopConnection(activeConnection);
+        }
+    }
+
+    private void stopConnection(HubConnection connection) {
+        try {
+            connection.stop().subscribe(
+                () -> { },
+                error -> Log.w(TAG, "Unable to stop background SignalR connection", error));
+        } catch (RuntimeException exception) {
+            Log.w(TAG, "Unable to stop background SignalR connection", exception);
+        }
     }
 
     private void scheduleReconnect() {
