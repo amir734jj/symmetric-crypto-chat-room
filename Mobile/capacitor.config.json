@@ -1,0 +1,14 @@
+{
+  "appId": "com.hesamian.symmetriccryptochat",
+  "appName": "Symmetric Crypto Chat",
+  "webDir": "www",
+  "loggingBehavior": "debug",
+  "server": {
+    "url": "https://at.coolify.hesamian.com",
+    "cleartext": false
+  },
+  "android": {
+    "minWebViewVersion": 105,
+    "webContentsDebuggingEnabled": false
+  }
+}

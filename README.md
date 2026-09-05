@@ -38,6 +38,23 @@ Set `TURN_SECRET` explicitly. The API uses it to issue short-lived credentials, 
 
 Microphone access requires a secure browser context. Use a trusted HTTPS certificate in production, either at a reverse proxy on the same host or by configuring ASP.NET Core HTTPS and mounting the certificate into the container. Plain HTTP works only on `localhost` for browser media capture.
 
+### Android application
+
+The `Mobile` Capacitor project packages the deployed web application in an Android WebView and adds native speaker, earpiece, and proximity-based routing. Auto mode preserves wired or Bluetooth communication devices and otherwise switches between the built-in earpiece and speaker using the phone's proximity sensor.
+
+Every push to `master` updates the single `latest` GitHub release and replaces its `symmetric-crypto-chat-latest.apk` asset. Without signing secrets, the workflow publishes a debug-signed APK. Configure all four repository secrets below to publish an upgradeable release-signed APK:
+
+```text
+ANDROID_KEYSTORE_BASE64
+ANDROID_KEYSTORE_PASSWORD
+ANDROID_KEY_ALIAS
+ANDROID_KEY_PASSWORD
+```
+
+Generate a release keystore once, Base64-encode the entire keystore file, and store that value in `ANDROID_KEYSTORE_BASE64`. Keep the same keystore for every build; changing it prevents Android from installing a new APK over an existing installation. GitHub Release immutability must remain disabled because the workflow intentionally replaces the asset in the rolling release.
+
+The Android shell currently loads `https://at.coolify.hesamian.com`, configured in `Mobile/capacitor.config.json`. The device must have an up-to-date Android System WebView that supports `RTCRtpScriptTransform`, which remains required for encrypted voice.
+
 #### Coolify
 
 Create a Dockerfile resource for this repository and route `chat.coolify.hesamian.com` to container port `3000`. Configure persistent storage at `/app/data` for LiteDB playback data.

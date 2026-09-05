@@ -56,8 +56,8 @@ export async function initialize(reference, container, turnCredentials, password
         audio: getAudioConstraints(),
         video: false
     });
-    if ("audioSession" in navigator) {
-        setAudioOutputMode("auto");
+    if (getNativeAudioRouter() || "audioSession" in navigator) {
+        await setAudioOutputMode("auto");
     }
     document.removeEventListener("visibilitychange", handleVisibilityChange);
     document.addEventListener("visibilitychange", handleVisibilityChange);
@@ -118,11 +118,11 @@ export function setMuted(muted) {
 }
 
 export function supportsAudioOutputSelection() {
-    return supportsAudioOutputDevicePicker() || "audioSession" in navigator;
+    return Boolean(getNativeAudioRouter()) || supportsAudioOutputDevicePicker() || "audioSession" in navigator;
 }
 
 export function usesAudioSessionOutputModes() {
-    return "audioSession" in navigator;
+    return Boolean(getNativeAudioRouter()) || "audioSession" in navigator;
 }
 
 export async function chooseAudioOutput() {
@@ -137,8 +137,9 @@ export async function chooseAudioOutput() {
     throw new Error("Audio output selection is not supported by this browser");
 }
 
-export function setAudioOutputMode(selectedMode) {
-    if (!("audioSession" in navigator)) {
+export async function setAudioOutputMode(selectedMode) {
+    const nativeAudioRouter = getNativeAudioRouter();
+    if (!nativeAudioRouter && !("audioSession" in navigator)) {
         throw new Error("Audio output modes are not supported by this browser");
     }
 
@@ -147,6 +148,11 @@ export function setAudioOutputMode(selectedMode) {
         : "auto";
     stopProximityRouting();
     audioOutputMode = mode;
+
+    if (nativeAudioRouter) {
+        await nativeAudioRouter.setMode({ mode });
+        return mode;
+    }
 
     if (!applyAudioOutputMode(mode)) {
         throw new Error("The browser could not change the audio route");
@@ -162,6 +168,10 @@ export function setAudioOutputMode(selectedMode) {
 function supportsAudioOutputDevicePicker() {
     return typeof navigator.mediaDevices.selectAudioOutput === "function" &&
         typeof HTMLMediaElement.prototype.setSinkId === "function";
+}
+
+function getNativeAudioRouter() {
+    return window.Capacitor?.Plugins?.VoiceAudioRouter;
 }
 
 export async function setAudioQuality(selectedAudioQuality) {
@@ -202,6 +212,16 @@ async function setEffectiveAudioQuality(selectedAudioQuality) {
 }
 
 export async function getConnectionDiagnostics() {
+    const nativeAudioRouter = getNativeAudioRouter();
+    let nativeAudioRouting = { supported: false };
+    if (nativeAudioRouter) {
+        try {
+            nativeAudioRouting = await nativeAudioRouter.getCapabilities();
+        } catch (error) {
+            nativeAudioRouting = { supported: false, error: error.message };
+        }
+    }
+
     const peerDiagnostics = await Promise.all(
         [...peers.entries()].map(async ([connectionId, peer]) => {
             const stats = await peer.connection.getStats();
@@ -268,6 +288,7 @@ export async function getConnectionDiagnostics() {
             voiceIsolation: getConstraintStatus(supportedConstraints, audioSettings, "voiceIsolation")
         },
         mobileCallSupport: {
+            nativeAudioRouting,
             screenWakeLockSupported: "wakeLock" in navigator,
             screenWakeLockActive: Boolean(screenWakeLock && !screenWakeLock.released),
             communicationAudioSession: navigator.audioSession?.type ?? "unsupported",
@@ -293,7 +314,7 @@ export function removeParticipant(connectionId) {
     peers.delete(connectionId);
 }
 
-export function leave() {
+export async function leave() {
     clearInterval(adaptationTimer);
     adaptationTimer = undefined;
     goodNetworkSamples = 0;
@@ -302,6 +323,11 @@ export function leave() {
     releaseScreenWakeLock();
     stopProximityRouting();
     setAudioSessionType("auto");
+    try {
+        await getNativeAudioRouter()?.reset();
+    } catch (error) {
+        console.warn("Unable to reset native audio routing", error);
+    }
 
     for (const connectionId of [...peers.keys()]) {
         removeParticipant(connectionId);
