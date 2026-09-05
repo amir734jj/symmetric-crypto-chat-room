@@ -304,8 +304,18 @@
         var targetName = _outgoingCallName;
         if (targetConnectionId == null) return;
 
-        await SignalRStateManager.CancelVoiceCall(targetConnectionId);
-        ClearOutgoingCall();
+        try
+        {
+            await SignalRStateManager.CancelVoiceCall(targetConnectionId);
+        }
+        catch
+        {
+        }
+        finally
+        {
+            ClearOutgoingCall();
+        }
+
         _callStatus = targetName == null ? "Call cancelled" : $"Stopped ringing {targetName}";
     }
 
@@ -338,12 +348,12 @@
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
         {
         }
-        catch (Exception exception)
+        catch
         {
             await InvokeAsync(() =>
             {
                 ClearOutgoingCall();
-                _error = $"Unable to cancel unanswered call: {exception.Message}";
+                _callStatus = $"{targetName} did not answer";
                 StateHasChanged();
             });
         }
