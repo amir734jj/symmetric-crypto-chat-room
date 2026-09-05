@@ -52,19 +52,12 @@ export async function initialize(reference, container, turnCredentials, password
         ]
     };
 
+    const nativeAudioRouter = getNativeAudioRouter();
     localStream = await navigator.mediaDevices.getUserMedia({
-        audio: getAudioConstraints(),
+        audio: nativeAudioRouter ? true : getAudioConstraints(),
         video: false
     });
-    const nativeAudioRouter = getNativeAudioRouter();
-    if (typeof nativeAudioRouter?.startCall === "function") {
-        try {
-            await nativeAudioRouter.startCall();
-        } catch (error) {
-            console.warn("Unable to enable native background call mode", error);
-        }
-    }
-    if (nativeAudioRouter || "audioSession" in navigator) {
+    if (!nativeAudioRouter && "audioSession" in navigator) {
         try {
             await setAudioOutputMode("auto");
         } catch (error) {
@@ -216,7 +209,7 @@ async function setEffectiveAudioQuality(selectedAudioQuality) {
     const qualityChanged = audioQuality !== normalizedQuality;
     audioQuality = normalizedQuality;
 
-    if (localStream) {
+    if (localStream && !getNativeAudioRouter()) {
         const constraintResults = await Promise.allSettled(localStream.getAudioTracks()
             .map(track => track.applyConstraints(getAudioConstraints())));
         for (const result of constraintResults) {

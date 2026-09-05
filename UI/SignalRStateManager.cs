@@ -14,7 +14,7 @@ namespace UI;
 
 public sealed class SignalRStateManager : AuthenticationStateProvider, IDisposable, ITypedClient
 {
-    private const string VoiceModulePath = "./js/voice-chat.js?v=20260905-3";
+    private const string VoiceModulePath = "./js/voice-chat.js?v=20260905-4";
 
     public event Func<string, string, Task>? VoiceOfferReceived;
     public event Func<string, string, Task>? VoiceAnswerReceived;
