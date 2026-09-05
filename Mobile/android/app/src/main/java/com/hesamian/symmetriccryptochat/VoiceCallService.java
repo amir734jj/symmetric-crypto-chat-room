@@ -32,6 +32,7 @@ public class VoiceCallService extends Service {
     private static final int STATUS_NOTIFICATION_ID = 1001;
     private static final int INCOMING_NOTIFICATION_ID = 1002;
     private static final long MAX_RECONNECT_DELAY_MILLISECONDS = 60000;
+    private static volatile boolean serviceRunning;
 
     private final Handler reconnectHandler = new Handler(Looper.getMainLooper());
     private HubConnection hubConnection;
@@ -49,7 +50,11 @@ public class VoiceCallService extends Service {
         Intent intent = new Intent(context, VoiceCallService.class)
             .setAction(ACTION_SET_CALL_ACTIVE)
             .putExtra(EXTRA_CALL_ACTIVE, active);
-        ContextCompat.startForegroundService(context, intent);
+        if (serviceRunning) {
+            context.startService(intent);
+        } else {
+            ContextCompat.startForegroundService(context, intent);
+        }
     }
 
     public static void stop(Context context) {
@@ -59,25 +64,32 @@ public class VoiceCallService extends Service {
     @Override
     public void onCreate() {
         super.onCreate();
+        serviceRunning = true;
         createNotificationChannels();
         acquireWakeLock();
     }
 
     @Override
     public int onStartCommand(Intent intent, int flags, int startId) {
-        session = BackgroundCallSession.load(this);
-        if (session == null) {
+        try {
+            session = BackgroundCallSession.load(this);
+            if (session == null) {
+                stopSelf();
+                return START_NOT_STICKY;
+            }
+
+            if (intent != null && ACTION_SET_CALL_ACTIVE.equals(intent.getAction())) {
+                setActiveCallState(intent.getBooleanExtra(EXTRA_CALL_ACTIVE, false));
+            } else {
+                updateForegroundNotification();
+            }
+            connect();
+            return START_STICKY;
+        } catch (RuntimeException exception) {
+            Log.e(TAG, "Unable to start background call handling", exception);
             stopSelf();
             return START_NOT_STICKY;
         }
-
-        if (intent != null && ACTION_SET_CALL_ACTIVE.equals(intent.getAction())) {
-            setActiveCallState(intent.getBooleanExtra(EXTRA_CALL_ACTIVE, false));
-        } else {
-            updateForegroundNotification();
-        }
-        connect();
-        return START_STICKY;
     }
 
     @Nullable
@@ -88,6 +100,7 @@ public class VoiceCallService extends Service {
 
     @Override
     public void onDestroy() {
+        serviceRunning = false;
         stopping = true;
         reconnectHandler.removeCallbacksAndMessages(null);
         releaseWakeLock();
@@ -165,16 +178,37 @@ public class VoiceCallService extends Service {
 
     private void updateForegroundNotification() {
         Notification notification = createStatusNotification();
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
-            int serviceType = ServiceInfo.FOREGROUND_SERVICE_TYPE_REMOTE_MESSAGING;
-            if (callActive) {
-                serviceType |= ServiceInfo.FOREGROUND_SERVICE_TYPE_MICROPHONE;
+        try {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
+                int serviceType = ServiceInfo.FOREGROUND_SERVICE_TYPE_REMOTE_MESSAGING;
+                if (callActive) {
+                    serviceType |= ServiceInfo.FOREGROUND_SERVICE_TYPE_MICROPHONE;
+                }
+                startForeground(STATUS_NOTIFICATION_ID, notification, serviceType);
+            } else if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q && callActive) {
+                startForeground(STATUS_NOTIFICATION_ID, notification, ServiceInfo.FOREGROUND_SERVICE_TYPE_MICROPHONE);
+            } else {
+                startForeground(STATUS_NOTIFICATION_ID, notification);
             }
-            startForeground(STATUS_NOTIFICATION_ID, notification, serviceType);
-        } else if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q && callActive) {
-            startForeground(STATUS_NOTIFICATION_ID, notification, ServiceInfo.FOREGROUND_SERVICE_TYPE_MICROPHONE);
-        } else {
-            startForeground(STATUS_NOTIFICATION_ID, notification);
+        } catch (RuntimeException exception) {
+            Log.e(TAG, "Unable to enable foreground microphone mode; keeping the call listener active", exception);
+            startListenerForegroundOrStop(notification);
+        }
+    }
+
+    private void startListenerForegroundOrStop(Notification notification) {
+        try {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
+                startForeground(
+                    STATUS_NOTIFICATION_ID,
+                    notification,
+                    ServiceInfo.FOREGROUND_SERVICE_TYPE_REMOTE_MESSAGING);
+            } else {
+                startForeground(STATUS_NOTIFICATION_ID, notification);
+            }
+        } catch (RuntimeException exception) {
+            Log.e(TAG, "Unable to keep the background call listener active", exception);
+            stopSelf();
         }
     }
 
