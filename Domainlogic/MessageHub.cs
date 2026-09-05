@@ -126,7 +126,7 @@ namespace DomainLogic
             {
                 if (TryRemovePendingCall(pendingCall.Key, connectionId))
                 {
-                    await Clients.Client(pendingCall.Key).VoiceCallCancelled(connectionId);
+                    await Clients.Client(pendingCall.Key).VoiceCallCancelled(connectionId, false);
                 }
             }
 
@@ -215,13 +215,13 @@ namespace DomainLogic
             }
         }
 
-        public Task CancelVoiceCall(string targetConnectionId)
+        public Task CancelVoiceCall(string targetConnectionId, bool timedOut)
         {
             var caller = GetCurrentUser();
             GetUserInSameChannel(targetConnectionId, caller.Channel);
 
             return TryRemovePendingCall(targetConnectionId, Context.ConnectionId)
-                ? Clients.Client(targetConnectionId).VoiceCallCancelled(Context.ConnectionId)
+                ? Clients.Client(targetConnectionId).VoiceCallCancelled(Context.ConnectionId, timedOut)
                 : Task.CompletedTask;
         }
 

@@ -316,7 +316,7 @@
             {
                 if (_outgoingCallConnectionId != targetConnectionId) return;
 
-                await SignalRStateManager.CancelVoiceCall(targetConnectionId);
+                await SignalRStateManager.CancelVoiceCall(targetConnectionId, true);
                 ClearOutgoingCall();
                 _callStatus = $"{targetName} did not answer";
                 StateHasChanged();
@@ -358,7 +358,7 @@
         });
     }
 
-    private Task VoiceCallCancelled(string callerConnectionId)
+    private Task VoiceCallCancelled(string callerConnectionId, bool timedOut)
     {
         return InvokeAsync(async () =>
         {
@@ -366,7 +366,9 @@
 
             var callerName = _incomingCallerName;
             await ClearIncomingCall();
-            _callStatus = callerName == null ? "Incoming call cancelled" : $"{callerName} stopped ringing";
+            _callStatus = timedOut
+                ? callerName == null ? "Missed call" : $"Missed call from {callerName}"
+                : callerName == null ? "Incoming call cancelled" : $"{callerName} stopped ringing";
             StateHasChanged();
         });
     }

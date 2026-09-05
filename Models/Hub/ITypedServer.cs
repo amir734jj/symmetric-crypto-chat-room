@@ -21,7 +21,7 @@ namespace Models.Hub
 
         Task RingVoice(string targetConnectionId);
 
-        Task CancelVoiceCall(string targetConnectionId);
+        Task CancelVoiceCall(string targetConnectionId, bool timedOut);
 
         Task RespondVoiceCall(string callerConnectionId, bool accepted);
 
