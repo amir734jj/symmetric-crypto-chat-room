@@ -180,6 +180,10 @@ export async function getConnectionDiagnostics() {
             };
         }));
 
+    const audioTrack = localStream?.getAudioTracks()[0];
+    const audioSettings = audioTrack?.getSettings();
+    const supportedConstraints = navigator.mediaDevices.getSupportedConstraints();
+
     return JSON.stringify({
         capturedAt: new Date().toISOString(),
         mediaEncryption: {
@@ -189,6 +193,12 @@ export async function getConnectionDiagnostics() {
         audioQualityMode,
         audioQuality,
         audioMaxBitrate: audioQualityProfiles[audioQuality].maxBitrate,
+        audioProcessing: {
+            echoCancellation: getConstraintStatus(supportedConstraints, audioSettings, "echoCancellation"),
+            noiseSuppression: getConstraintStatus(supportedConstraints, audioSettings, "noiseSuppression"),
+            autoGainControl: getConstraintStatus(supportedConstraints, audioSettings, "autoGainControl"),
+            voiceIsolation: getConstraintStatus(supportedConstraints, audioSettings, "voiceIsolation")
+        },
         iceTransportPolicy: peerConfiguration?.iceTransportPolicy,
         configuredIceServers: peerConfiguration?.iceServers.map(server => server.urls),
         peerConnections: peerDiagnostics
@@ -302,12 +312,25 @@ function normalizeAudioQualityMode(value) {
 }
 
 function getAudioConstraints() {
-    return {
+    const constraints = {
         channelCount: 1,
         sampleRate: { ideal: audioQualityProfiles[audioQuality].sampleRate },
-        echoCancellation: true,
-        noiseSuppression: true,
-        autoGainControl: true
+        echoCancellation: { ideal: true },
+        noiseSuppression: { ideal: true },
+        autoGainControl: { ideal: true }
+    };
+
+    if (navigator.mediaDevices.getSupportedConstraints().voiceIsolation) {
+        constraints.voiceIsolation = { ideal: true };
+    }
+
+    return constraints;
+}
+
+function getConstraintStatus(supportedConstraints, settings, constraintName) {
+    return {
+        supported: Boolean(supportedConstraints[constraintName]),
+        active: settings?.[constraintName] ?? false
     };
 }
 
