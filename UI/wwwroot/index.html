@@ -40,7 +40,7 @@
 <script>
     function playAudio(element) {
         stopAudio(element);
-        element.play();
+        return element.play().catch(() => false);
     }
     function stopAudio(element) {
         element.pause();

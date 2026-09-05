@@ -12,6 +12,8 @@ namespace Models
 
         public List<string> Names { get; set; } = new List<string>();
 
+        public List<OnlineUser> OnlineUsers { get; set; } = new List<OnlineUser>();
+
         public LoginViewModel UserInfo { get; set; }
 
         /// <summary>

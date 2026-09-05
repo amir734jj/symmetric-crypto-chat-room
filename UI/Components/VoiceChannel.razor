@@ -16,6 +16,14 @@
         </div>
 
         <div class="voice-channel-actions">
+            <label class="voice-quality">
+                <span>Audio quality</span>
+                <select class="form-select form-select-sm" @bind="_audioQuality" @bind:after="AudioQualityChanged" disabled="@_busy">
+                    <option value="low">Low</option>
+                    <option value="standard">Standard</option>
+                    <option value="high">High</option>
+                </select>
+            </label>
             <HxButton Color="@TurnHealthColor" Enabled="@(!_checkingTurn)" OnClick="CheckTurnHealth">
                 @TurnHealthButtonText
             </HxButton>
@@ -39,6 +47,46 @@
             }
         </div>
     </div>
+
+    <div class="voice-presence mt-3">
+        <strong>Online</strong>
+        @if (!OtherOnlineUsers.Any())
+        {
+            <span class="text-muted">No one else is online</span>
+        }
+        else
+        {
+            @foreach (var user in OtherOnlineUsers)
+            {
+                <div class="voice-online-user">
+                    <span>@user.Name</span>
+                    <HxButton Size="ButtonSize.Small" Color="ThemeColor.Primary" Enabled="@(!_busy)" OnClick="@(() => Ring(user))">
+                        Ring
+                    </HxButton>
+                </div>
+            }
+        }
+    </div>
+
+    @if (_incomingCallerConnectionId != null)
+    {
+        <div class="voice-call-alert mt-3" role="alert">
+            <strong>@_incomingCallerName is calling</strong>
+            <div>
+                <HxButton Size="ButtonSize.Small" Color="ThemeColor.Success" Enabled="@(!_busy)" OnClick="AcceptCall">
+                    Accept
+                </HxButton>
+                <HxButton Size="ButtonSize.Small" Color="ThemeColor.Danger" Enabled="@(!_busy)" OnClick="DeclineCall">
+                    Decline
+                </HxButton>
+            </div>
+        </div>
+    }
+
+    @if (!string.IsNullOrWhiteSpace(_callStatus))
+    {
+        <div class="text-muted mt-2" role="status">@_callStatus</div>
+    }
 
     @if (!string.IsNullOrWhiteSpace(_error))
     {
@@ -71,6 +119,10 @@
     }
 
     <div @ref="_remoteAudioContainer"></div>
+
+    <audio @ref="_ringtone" loop preload="auto" style="display: none">
+        <source src="call.mp3" type="audio/mpeg" />
+    </audio>
 </section>
 
 @code {
@@ -78,6 +130,7 @@
     private DotNetObjectReference<VoiceChannel>? _reference;
     private IJSObjectReference? _module;
     private ElementReference _remoteAudioContainer;
+    private ElementReference _ringtone;
     private bool _joined;
     private bool _muted;
     private bool _busy;
@@ -85,7 +138,14 @@
     private bool _showDebug;
     private string? _error;
     private string? _debugInfo;
+    private string? _incomingCallerConnectionId;
+    private string? _incomingCallerName;
+    private string? _callStatus;
+    private string _audioQuality = "standard";
     private TurnHealthStatus? _turnHealth;
+
+    private IEnumerable<OnlineUser> OtherOnlineUsers => State.OnlineUsers
+        .Where(user => user.ConnectionId != SignalRStateManager.ConnectionId);
 
     private ThemeColor TurnHealthColor => _turnHealth switch
     {
@@ -113,6 +173,8 @@
         SignalRStateManager.VoiceAnswerReceived += ReceiveVoiceAnswer;
         SignalRStateManager.VoiceIceCandidateReceived += ReceiveVoiceIceCandidate;
         SignalRStateManager.VoiceParticipantLeftReceived += VoiceParticipantLeft;
+        SignalRStateManager.VoiceCallReceivedEvent += VoiceCallReceived;
+        SignalRStateManager.VoiceCallRespondedEvent += VoiceCallResponded;
         SignalRStateManager.ConnectionReconnected += ConnectionReconnected;
     }
 
@@ -146,7 +208,8 @@
                 _reference,
                 _remoteAudioContainer,
                 turnCredentials,
-                voiceKey);
+                voiceKey,
+                _audioQuality);
 
             var participants = await SignalRStateManager.JoinVoice();
             _joined = true;
@@ -174,6 +237,101 @@
     {
         _muted = !_muted;
         await _module!.InvokeVoidAsync("setMuted", _muted);
+    }
+
+    private async Task AudioQualityChanged()
+    {
+        if (_joined && _module != null)
+        {
+            await _module.InvokeVoidAsync("setAudioQuality", _audioQuality);
+        }
+    }
+
+    private async Task Ring(OnlineUser user)
+    {
+        _callStatus = null;
+        if (!_joined)
+        {
+            await Join();
+        }
+
+        if (!_joined) return;
+
+        try
+        {
+            await SignalRStateManager.RingVoice(user.ConnectionId);
+            _callStatus = $"Ringing {user.Name}...";
+        }
+        catch (Exception exception)
+        {
+            _error = $"Unable to ring {user.Name}: {exception.Message}";
+        }
+    }
+
+    private Task VoiceCallReceived(string callerConnectionId, string callerName)
+    {
+        return InvokeAsync(async () =>
+        {
+            await StopRingtone();
+            _incomingCallerConnectionId = callerConnectionId;
+            _incomingCallerName = callerName;
+            _callStatus = null;
+            await PlayRingtone();
+            StateHasChanged();
+        });
+    }
+
+    private Task VoiceCallResponded(string responderName, bool accepted)
+    {
+        return InvokeAsync(() =>
+        {
+            _callStatus = accepted
+                ? $"{responderName} accepted the call"
+                : $"{responderName} declined the call";
+            StateHasChanged();
+        });
+    }
+
+    private async Task AcceptCall()
+    {
+        var callerConnectionId = _incomingCallerConnectionId;
+        await ClearIncomingCall();
+        if (callerConnectionId == null) return;
+
+        if (!_joined)
+        {
+            await Join();
+        }
+
+        await SignalRStateManager.RespondVoiceCall(callerConnectionId, _joined);
+        _callStatus = _joined ? "Call accepted" : "Unable to join the call";
+    }
+
+    private async Task DeclineCall()
+    {
+        var callerConnectionId = _incomingCallerConnectionId;
+        await ClearIncomingCall();
+        if (callerConnectionId != null)
+        {
+            await SignalRStateManager.RespondVoiceCall(callerConnectionId, false);
+        }
+    }
+
+    private async Task ClearIncomingCall()
+    {
+        await StopRingtone();
+        _incomingCallerConnectionId = null;
+        _incomingCallerName = null;
+    }
+
+    private async Task PlayRingtone()
+    {
+        await Js.InvokeVoidAsync("playAudio", _ringtone);
+    }
+
+    private async Task StopRingtone()
+    {
+        await Js.InvokeVoidAsync("stopAudio", _ringtone);
     }
 
     private async Task CheckTurnHealth()
@@ -292,7 +450,11 @@
         SignalRStateManager.VoiceAnswerReceived -= ReceiveVoiceAnswer;
         SignalRStateManager.VoiceIceCandidateReceived -= ReceiveVoiceIceCandidate;
         SignalRStateManager.VoiceParticipantLeftReceived -= VoiceParticipantLeft;
+        SignalRStateManager.VoiceCallReceivedEvent -= VoiceCallReceived;
+        SignalRStateManager.VoiceCallRespondedEvent -= VoiceCallResponded;
         SignalRStateManager.ConnectionReconnected -= ConnectionReconnected;
+
+        await StopRingtone();
 
         if (_joined)
         {

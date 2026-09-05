@@ -19,6 +19,10 @@ namespace Models.Hub
 
         Task<TurnHealthStatus> CheckTurnHealth();
 
+        Task RingVoice(string targetConnectionId);
+
+        Task RespondVoiceCall(string callerConnectionId, bool accepted);
+
         Task LeaveVoice();
 
         Task SendVoiceOffer(string targetConnectionId, string offer);

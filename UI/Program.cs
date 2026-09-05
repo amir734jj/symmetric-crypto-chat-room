@@ -21,11 +21,14 @@ var serverlessBaseUri = string.IsNullOrEmpty(builder.Configuration["ServerlessBa
 builder.Services.AddOptions();
 builder.Services.AddAuthorizationCore();
 
-builder.Services.AddSingleton(new HubConnectionBuilder()
+var hubConnection = new HubConnectionBuilder()
     .WithUrl(new Uri(new Uri(serverlessBaseUri), "signalr"))
     .WithAutomaticReconnect()
     .AddJsonProtocol()
-    .Build());
+    .Build();
+hubConnection.KeepAliveInterval = TimeSpan.FromSeconds(30);
+hubConnection.ServerTimeout = TimeSpan.FromSeconds(90);
+builder.Services.AddSingleton(hubConnection);
 
 builder.Services.AddPageVisibility();
 

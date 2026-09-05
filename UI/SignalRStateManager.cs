@@ -20,7 +20,11 @@ public sealed class SignalRStateManager : AuthenticationStateProvider, IDisposab
     public event Func<string, string, Task>? VoiceAnswerReceived;
     public event Func<string, string, Task>? VoiceIceCandidateReceived;
     public event Func<string, Task>? VoiceParticipantLeftReceived;
+    public event Func<string, string, Task>? VoiceCallReceivedEvent;
+    public event Func<string, bool, Task>? VoiceCallRespondedEvent;
     public event Func<Task>? ConnectionReconnected;
+
+    public string? ConnectionId => _hubConnection.ConnectionId;
 
     private readonly ISyncSessionStorageService _sessionStorageService;
     
@@ -158,6 +162,7 @@ public sealed class SignalRStateManager : AuthenticationStateProvider, IDisposab
 
         _state.UserInfo = null;
         _state.Names = [];
+        _state.OnlineUsers = [];
         _state.Messages.Clear();
         
         _sessionStorageService.RemoveItem(SESSION_KEY);
@@ -196,6 +201,16 @@ public sealed class SignalRStateManager : AuthenticationStateProvider, IDisposab
     public Task<TurnHealthStatus> CheckTurnHealth()
     {
         return _server.CheckTurnHealth();
+    }
+
+    public Task RingVoice(string targetConnectionId)
+    {
+        return _server.RingVoice(targetConnectionId);
+    }
+
+    public Task RespondVoiceCall(string callerConnectionId, bool accepted)
+    {
+        return _server.RespondVoiceCall(callerConnectionId, accepted);
     }
 
     public Task LeaveVoice()
@@ -263,11 +278,22 @@ public sealed class SignalRStateManager : AuthenticationStateProvider, IDisposab
         return Task.CompletedTask;
     }
 
-    public Task Status(MessageTypeEnum messageTypeEnum, List<string> names)
+    public Task Status(MessageTypeEnum messageTypeEnum, List<OnlineUser> users)
     {
-        _state.Names = names;
+        _state.OnlineUsers = users;
+        _state.Names = users.Select(user => user.Name).ToList();
 
         return Task.CompletedTask;
+    }
+
+    public Task VoiceCallReceived(string callerConnectionId, string callerName)
+    {
+        return VoiceCallReceivedEvent?.Invoke(callerConnectionId, callerName) ?? Task.CompletedTask;
+    }
+
+    public Task VoiceCallResponded(string responderName, bool accepted)
+    {
+        return VoiceCallRespondedEvent?.Invoke(responderName, accepted) ?? Task.CompletedTask;
     }
 
     public Task VoiceParticipantLeft(string connectionId)

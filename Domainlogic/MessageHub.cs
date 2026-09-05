@@ -1,6 +1,7 @@
 ﻿using System;
 using System.Collections.Concurrent;
 using System.Collections.Generic;
+using System.Diagnostics;
 using System.Linq;
 using System.Security.Cryptography;
 using System.Text;
@@ -54,8 +55,6 @@ namespace Domainlogic
             _playbackLogic.RecordMessage(message);
             
             await Clients.Group(message.Channel).Inbox(message);
-            
-            await NotifyAll(message.Channel, MessageTypeEnum.Status);
         }
         
         public async Task Join(string channel, string name)
@@ -150,6 +149,26 @@ namespace Domainlogic
             return _turnHealthChecker.CheckAsync();
         }
 
+        public Task RingVoice(string targetConnectionId)
+        {
+            var caller = GetCurrentUser();
+            var target = GetUserInSameChannel(targetConnectionId, caller.Channel);
+            Debug.Assert(target.Channel == caller.Channel);
+            if (targetConnectionId == Context.ConnectionId)
+            {
+                throw new HubException("Cannot ring the current user");
+            }
+
+            return Clients.Client(targetConnectionId).VoiceCallReceived(Context.ConnectionId, caller.Name);
+        }
+
+        public Task RespondVoiceCall(string callerConnectionId, bool accepted)
+        {
+            var responder = GetCurrentUser();
+            GetUserInSameChannel(callerConnectionId, responder.Channel);
+            return Clients.Client(callerConnectionId).VoiceCallResponded(responder.Name, accepted);
+        }
+
         public async Task LeaveVoice()
         {
             var userInfo = GetCurrentUser();
@@ -199,11 +218,25 @@ namespace Domainlogic
             }
         }
 
+        private static (string Channel, string Name) GetUserInSameChannel(string connectionId, string channel)
+        {
+            if (!Users.TryGetValue(connectionId, out var user) || user.Channel != channel)
+            {
+                throw new HubException("User is not online in the same channel");
+            }
+
+            return user;
+        }
+
         private async Task NotifyAll(string channel, MessageTypeEnum type)
         {
             var users = Users
                 .Where(x => x.Value.Channel == channel)
-                .Select(x => x.Value.Name)
+                .Select(x => new OnlineUser
+                {
+                    ConnectionId = x.Key,
+                    Name = x.Value.Name
+                })
                 .ToList();
             
             await Clients.Group(channel).Status(type, users);

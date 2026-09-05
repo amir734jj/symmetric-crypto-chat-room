@@ -63,8 +63,46 @@ pre {
     justify-content: flex-end;
 }
 
+.voice-quality {
+    align-items: center;
+    display: flex;
+    gap: 0.5rem;
+    white-space: nowrap;
+}
+
+.voice-quality .form-select {
+    min-width: 7.5rem;
+}
+
 .voice-health-message {
     overflow-wrap: anywhere;
+}
+
+.voice-presence {
+    align-items: center;
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.5rem 1rem;
+}
+
+.voice-online-user {
+    align-items: center;
+    display: flex;
+    gap: 0.5rem;
+}
+
+.voice-call-alert {
+    align-items: center;
+    background: #e8f5ec;
+    border-left: 4px solid #198754;
+    display: flex;
+    justify-content: space-between;
+    padding: 0.75rem;
+}
+
+.voice-call-alert > div {
+    display: flex;
+    gap: 0.5rem;
 }
 
 .voice-debug {
@@ -101,5 +139,11 @@ pre {
 
     .voice-channel-actions {
         justify-content: flex-start;
+    }
+
+    .voice-call-alert {
+        align-items: stretch;
+        flex-direction: column;
+        gap: 0.75rem;
     }
 }

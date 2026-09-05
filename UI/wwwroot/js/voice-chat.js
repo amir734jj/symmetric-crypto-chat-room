@@ -5,9 +5,15 @@ let peerConfiguration;
 let encryptionWorker;
 let voiceKey;
 let localConnectionId;
+let audioQuality = "standard";
 const peers = new Map();
+const audioQualityProfiles = {
+    low: { sampleRate: 16000, maxBitrate: 16000 },
+    standard: { sampleRate: 32000, maxBitrate: 32000 },
+    high: { sampleRate: 48000, maxBitrate: 64000 }
+};
 
-export async function initialize(reference, container, turnCredentials, passwordDerivedKey) {
+export async function initialize(reference, container, turnCredentials, passwordDerivedKey, selectedAudioQuality) {
     if (!("RTCRtpScriptTransform" in window)) {
         throw new Error("This browser does not support password-encrypted WebRTC audio");
     }
@@ -16,6 +22,7 @@ export async function initialize(reference, container, turnCredentials, password
     remoteAudioContainer = container;
     voiceKey = passwordDerivedKey;
     localConnectionId = turnCredentials.username.split(":", 2)[1];
+    audioQuality = normalizeAudioQuality(selectedAudioQuality);
     encryptionWorker = new Worker(new URL("./voice-crypto-worker.js", import.meta.url), { type: "module" });
 
     const host = turnCredentials.host || window.location.hostname;
@@ -35,18 +42,14 @@ export async function initialize(reference, container, turnCredentials, password
     };
 
     localStream = await navigator.mediaDevices.getUserMedia({
-        audio: {
-            echoCancellation: true,
-            noiseSuppression: true,
-            autoGainControl: true
-        },
+        audio: getAudioConstraints(),
         video: false
     });
 }
 
 export async function connectToParticipants(connectionIds) {
     for (const connectionId of connectionIds) {
-        const peer = createPeer(connectionId);
+        const peer = await createPeer(connectionId);
         const offer = await peer.connection.createOffer();
         await peer.connection.setLocalDescription(offer);
         await dotNetReference.invokeMethodAsync(
@@ -57,7 +60,7 @@ export async function connectToParticipants(connectionIds) {
 }
 
 export async function receiveOffer(senderConnectionId, offerJson) {
-    const peer = createPeer(senderConnectionId);
+    const peer = await createPeer(senderConnectionId);
     await peer.connection.setRemoteDescription(JSON.parse(offerJson));
     await addPendingCandidates(peer);
 
@@ -78,7 +81,7 @@ export async function receiveAnswer(senderConnectionId, answerJson) {
 }
 
 export async function receiveIceCandidate(senderConnectionId, candidateJson) {
-    const peer = createPeer(senderConnectionId);
+    const peer = await createPeer(senderConnectionId);
     const candidate = JSON.parse(candidateJson);
 
     if (peer.connection.remoteDescription) {
@@ -93,6 +96,20 @@ export function setMuted(muted) {
     for (const track of localStream.getAudioTracks()) {
         track.enabled = !muted;
     }
+}
+
+export async function setAudioQuality(selectedAudioQuality) {
+    audioQuality = normalizeAudioQuality(selectedAudioQuality);
+
+    if (localStream) {
+        await Promise.all(localStream.getAudioTracks()
+            .map(track => track.applyConstraints(getAudioConstraints())));
+    }
+
+    await Promise.all([...peers.values()]
+        .flatMap(peer => peer.connection.getSenders())
+        .filter(sender => sender.track?.kind === "audio")
+        .map(applySenderAudioQuality));
 }
 
 export async function getConnectionDiagnostics() {
@@ -148,6 +165,8 @@ export async function getConnectionDiagnostics() {
             passwordEncryption: voiceKey ? "AES-256-CTR" : "disabled",
             webRtcTransportEncryption: "DTLS-SRTP"
         },
+        audioQuality,
+        audioMaxBitrate: audioQualityProfiles[audioQuality].maxBitrate,
         iceTransportPolicy: peerConfiguration?.iceTransportPolicy,
         configuredIceServers: peerConfiguration?.iceServers.map(server => server.urls),
         peerConnections: peerDiagnostics
@@ -182,13 +201,15 @@ export function leave() {
     encryptionWorker = undefined;
 }
 
-function createPeer(connectionId) {
+async function createPeer(connectionId) {
     const existing = peers.get(connectionId);
     if (existing) return existing;
 
     const connection = new RTCPeerConnection(peerConfiguration);
+    const audioSenders = [];
     for (const track of localStream.getTracks()) {
         const sender = connection.addTrack(track, localStream);
+        audioSenders.push(sender);
         sender.transform = new RTCRtpScriptTransform(
             encryptionWorker,
             { operation: "encrypt", key: voiceKey, senderId: localConnectionId });
@@ -220,6 +241,7 @@ function createPeer(connectionId) {
             JSON.stringify(event.candidate));
     };
 
+    await Promise.all(audioSenders.map(applySenderAudioQuality));
     return peer;
 }
 
@@ -242,4 +264,27 @@ function sanitizeCandidate(candidate) {
         url: candidate.url,
         networkType: candidate.networkType
     };
+}
+
+function normalizeAudioQuality(value) {
+    return value in audioQualityProfiles ? value : "standard";
+}
+
+function getAudioConstraints() {
+    return {
+        channelCount: 1,
+        sampleRate: { ideal: audioQualityProfiles[audioQuality].sampleRate },
+        echoCancellation: true,
+        noiseSuppression: true,
+        autoGainControl: true
+    };
+}
+
+async function applySenderAudioQuality(sender) {
+    const parameters = sender.getParameters();
+    if (!parameters.encodings?.length) {
+        parameters.encodings = [{}];
+    }
+    parameters.encodings[0].maxBitrate = audioQualityProfiles[audioQuality].maxBitrate;
+    await sender.setParameters(parameters);
 }

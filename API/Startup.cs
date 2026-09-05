@@ -54,6 +54,8 @@ public class Startup
 
         services.AddSignalR(c =>
         {
+            c.KeepAliveInterval = TimeSpan.FromSeconds(30);
+            c.ClientTimeoutInterval = TimeSpan.FromSeconds(90);
             c.MaximumReceiveMessageSize = (long)ByteSize.FromMegaBytes(50).Bytes; // 50 mega-bytes
             c.StreamBufferCapacity = 50;
             c.EnableDetailedErrors = true;

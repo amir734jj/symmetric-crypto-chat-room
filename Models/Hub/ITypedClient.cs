@@ -7,7 +7,11 @@ namespace Models.Hub
     {
         public Task Inbox(MessagePayload messagePayload);
 
-        public Task Status(MessageTypeEnum messageTypeEnum, List<string> names);
+        public Task Status(MessageTypeEnum messageTypeEnum, List<OnlineUser> users);
+
+        public Task VoiceCallReceived(string callerConnectionId, string callerName);
+
+        public Task VoiceCallResponded(string responderName, bool accepted);
 
         public Task VoiceParticipantLeft(string connectionId);
 
