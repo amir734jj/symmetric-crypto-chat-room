@@ -77,6 +77,8 @@ public class Startup
             app.UseCors("CorsPolicy");
         }
 
+        app.UseResponseCompression();
+
         app.UseDefaultFiles()
             .UseStaticFiles(new StaticFileOptions
             {

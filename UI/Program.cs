@@ -7,12 +7,7 @@ using Microsoft.AspNetCore.Components.Web;
 using Microsoft.AspNetCore.Components.WebAssembly.Hosting;
 using Microsoft.AspNetCore.SignalR.Client;
 using Models;
-using ReactiveUI.Builder;
 using UI;
-
-RxAppBuilder.CreateReactiveUIBuilder()
-    .WithCoreServices()
-    .BuildApp();
 
 var builder = WebAssemblyHostBuilder.CreateDefault(args);
 builder.RootComponents.Add<App>("#app");

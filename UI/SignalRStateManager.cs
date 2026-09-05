@@ -1,6 +1,4 @@
 using System.ComponentModel;
-using System.Reactive.Concurrency;
-using System.Reactive.Linq;
 using System.Security.Claims;
 using Blazored.SessionStorage;
 using CaseExtensions;
@@ -10,7 +8,6 @@ using Microsoft.AspNetCore.SignalR.Client;
 using Models;
 using Models.Hub;
 using Models.ViewModels;
-using ReactiveUI;
 using TypedSignalR.Client;
 
 namespace UI;
@@ -58,15 +55,7 @@ public sealed class SignalRStateManager : AuthenticationStateProvider, IDisposab
         _state = state;
 
         _state.PropertyChanged += StateChangedHandler;
-        
-        this.WhenAnyValue(x => x._state.StateEnum)
-            .Throttle(TimeSpan.FromSeconds(1))
-            .Where(x => x.HasFlag(SignalRStateEnum.Uninitialized))
-            .ObserveOn(SynchronizationContext.Current is { } context
-                ? new SynchronizationContextScheduler(context)
-                : CurrentThreadScheduler.Instance)
-            .InvokeCommand(ReactiveCommand.CreateFromTask(Initialize));
-        
+
         _server = hubConnection.CreateHubProxy<ITypedServer>();
         hubConnection.Register<ITypedClient>(this);
         hubConnection.Reconnected += HubConnectionReconnected;
