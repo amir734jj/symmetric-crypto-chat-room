@@ -70,6 +70,8 @@ jobs:
         run: |
           notes="Android APK built from commit ${GITHUB_SHA}. Download symmetric-crypto-chat-latest.apk and allow installation from this source."
           if gh release view latest --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            git tag --force latest "$GITHUB_SHA"
+            git push origin refs/tags/latest --force
             gh release edit latest --repo "$GITHUB_REPOSITORY" --title "Latest Android APK" --notes "$notes" --latest
             gh release upload latest symmetric-crypto-chat-latest.apk --repo "$GITHUB_REPOSITORY" --clobber
           else
