@@ -13,7 +13,7 @@ let poorNetworkSamples = 0;
 let adaptationInProgress = false;
 let screenWakeLock;
 let selectedAudioOutputId = "";
-let audioOutputMode = "earpiece";
+let audioOutputMode = "auto";
 const peers = new Map();
 const audioQualityProfiles = {
     low: { sampleRate: 16000, maxBitrate: 16000 },
@@ -54,7 +54,7 @@ export async function initialize(reference, container, turnCredentials, password
         audio: getAudioConstraints(),
         video: false
     });
-    setAudioSessionType("play-and-record");
+    setAudioSessionType("auto");
     document.removeEventListener("visibilitychange", handleVisibilityChange);
     document.addEventListener("visibilitychange", handleVisibilityChange);
     await requestScreenWakeLock();
@@ -117,7 +117,7 @@ export function supportsAudioOutputSelection() {
     return supportsAudioOutputDevicePicker() || "audioSession" in navigator;
 }
 
-export function usesAudioSessionOutputToggle() {
+export function usesAudioSessionOutputModes() {
     return !supportsAudioOutputDevicePicker() && "audioSession" in navigator;
 }
 
@@ -130,17 +130,27 @@ export async function chooseAudioOutput() {
         return output.label || "Selected output";
     }
 
+    throw new Error("Audio output selection is not supported by this browser");
+}
+
+export function setAudioOutputMode(selectedMode) {
     if (!("audioSession" in navigator)) {
-        throw new Error("Audio output selection is not supported by this browser");
+        throw new Error("Audio output modes are not supported by this browser");
     }
 
-    const useSpeaker = audioOutputMode !== "speaker";
-    if (!setAudioSessionType(useSpeaker ? "playback" : "play-and-record")) {
+    const mode = ["auto", "speaker", "earpiece"].includes(selectedMode)
+        ? selectedMode
+        : "auto";
+    const sessionType = mode === "speaker"
+        ? "playback"
+        : mode === "earpiece" ? "play-and-record" : "auto";
+
+    if (!setAudioSessionType(sessionType)) {
         throw new Error("The browser could not change the audio route");
     }
 
-    audioOutputMode = useSpeaker ? "speaker" : "earpiece";
-    return useSpeaker ? "Speaker" : "Earpiece";
+    audioOutputMode = mode;
+    return mode;
 }
 
 function supportsAudioOutputDevicePicker() {
@@ -298,7 +308,7 @@ export function leave() {
     voiceKey = undefined;
     localConnectionId = undefined;
     selectedAudioOutputId = "";
-    audioOutputMode = "earpiece";
+    audioOutputMode = "auto";
     encryptionWorker?.terminate();
     encryptionWorker = undefined;
 }

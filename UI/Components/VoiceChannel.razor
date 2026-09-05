@@ -37,9 +37,23 @@
             {
                 @if (_audioOutputSelectionSupported)
                 {
-                    <HxButton Color="ThemeColor.Secondary" OnClick="ChooseAudioOutput">
-                        @AudioOutputButtonText
-                    </HxButton>
+                    @if (_usesAudioSessionOutputModes)
+                    {
+                        <label class="voice-quality">
+                            <span>Audio output</span>
+                            <select class="form-select form-select-sm" @bind="_audioOutputMode" @bind:after="AudioOutputModeChanged">
+                                <option value="auto">Auto</option>
+                                <option value="earpiece">Earpiece</option>
+                                <option value="speaker">Speaker</option>
+                            </select>
+                        </label>
+                    }
+                    else
+                    {
+                        <HxButton Color="ThemeColor.Secondary" OnClick="ChooseAudioOutput">
+                            Choose output
+                        </HxButton>
+                    }
                 }
                 <HxButton Color="ThemeColor.Secondary" OnClick="ToggleMute">
                     @(_muted ? "Unmute" : "Mute")
@@ -159,8 +173,7 @@
     private bool _checkingTurn;
     private bool _showDebug;
     private bool _audioOutputSelectionSupported;
-    private bool _usesAudioSessionOutputToggle;
-    private bool _usingSpeaker;
+    private bool _usesAudioSessionOutputModes;
     private string? _error;
     private string? _debugInfo;
     private string? _incomingCallerConnectionId;
@@ -171,6 +184,7 @@
     private string? _callStatus;
     private string _audioQuality = "auto";
     private string _effectiveAudioQuality = "standard";
+    private string _audioOutputMode = "auto";
     private TurnHealthStatus? _turnHealth;
 
     private IEnumerable<OnlineUser> OtherOnlineUsers => State.OnlineUsers
@@ -182,10 +196,6 @@
         { Healthy: false } => ThemeColor.Danger,
         _ => ThemeColor.Secondary
     };
-
-    private string AudioOutputButtonText => _usesAudioSessionOutputToggle
-        ? (_usingSpeaker ? "Use earpiece" : "Use speaker")
-        : "Choose output";
 
     private string TurnHealthButtonText => _checkingTurn
         ? "Checking STUN/TURN..."
@@ -251,7 +261,7 @@
                 voiceKey,
                 _audioQuality);
             _audioOutputSelectionSupported = await _module.InvokeAsync<bool>("supportsAudioOutputSelection");
-            _usesAudioSessionOutputToggle = await _module.InvokeAsync<bool>("usesAudioSessionOutputToggle");
+            _usesAudioSessionOutputModes = await _module.InvokeAsync<bool>("usesAudioSessionOutputModes");
 
             var participants = await SignalRStateManager.JoinVoice();
             _joined = true;
@@ -288,11 +298,28 @@
         try
         {
             var outputLabel = await _module.InvokeAsync<string>("chooseAudioOutput");
-            if (_usesAudioSessionOutputToggle)
-            {
-                _usingSpeaker = outputLabel == "Speaker";
-            }
             _callStatus = $"Audio output: {outputLabel}";
+            _error = null;
+        }
+        catch (Exception exception)
+        {
+            _error = $"Unable to change audio output: {exception.Message}";
+        }
+    }
+
+    private async Task AudioOutputModeChanged()
+    {
+        if (_module == null) return;
+
+        try
+        {
+            _audioOutputMode = await _module.InvokeAsync<string>("setAudioOutputMode", _audioOutputMode);
+            _callStatus = _audioOutputMode switch
+            {
+                "speaker" => "Audio output: Speaker",
+                "earpiece" => "Audio output: Earpiece",
+                _ => "Audio output: Auto (phone proximity)"
+            };
             _error = null;
         }
         catch (Exception exception)
@@ -631,8 +658,8 @@
         _muted = false;
         _showDebug = false;
         _audioOutputSelectionSupported = false;
-        _usesAudioSessionOutputToggle = false;
-        _usingSpeaker = false;
+        _usesAudioSessionOutputModes = false;
+        _audioOutputMode = "auto";
         _debugInfo = null;
     }
 
