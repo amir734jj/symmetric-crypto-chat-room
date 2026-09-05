@@ -1,4 +1,3 @@
-using Blazor.Extensions.Logging;
 using BlazorDownloadFile;
 using Blazored.SessionStorage;
 using CurrieTechnologies.Razor.PageVisibility;
@@ -8,7 +7,13 @@ using Microsoft.AspNetCore.Components.Web;
 using Microsoft.AspNetCore.Components.WebAssembly.Hosting;
 using Microsoft.AspNetCore.SignalR.Client;
 using Models;
+using ReactiveUI.Builder;
 using UI;
+
+RxAppBuilder.CreateReactiveUIBuilder()
+    .WithCoreServices()
+    .WithPlatformServices()
+    .BuildApp();
 
 var builder = WebAssemblyHostBuilder.CreateDefault(args);
 builder.RootComponents.Add<App>("#app");
@@ -43,7 +48,6 @@ builder.Services.AddScoped<AuthenticationStateProvider, SignalRStateManager>();
 builder.Services.AddHxServices();
 builder.Services.AddBlazorDownloadFile();
 
-builder.Services.AddLogging(x => x.AddBrowserConsole()
-    .SetMinimumLevel(LogLevel.Trace));
+builder.Logging.SetMinimumLevel(LogLevel.Trace);
 
 await builder.Build().RunAsync();
