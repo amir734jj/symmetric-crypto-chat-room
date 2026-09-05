@@ -116,6 +116,7 @@ export async function setAudioQuality(selectedAudioQuality) {
     goodNetworkSamples = 0;
     poorNetworkSamples = 0;
     await setEffectiveAudioQuality(audioQualityMode === "auto" ? "standard" : audioQualityMode);
+    return audioQuality;
 }
 
 async function setEffectiveAudioQuality(selectedAudioQuality) {
@@ -124,14 +125,23 @@ async function setEffectiveAudioQuality(selectedAudioQuality) {
     audioQuality = normalizedQuality;
 
     if (localStream) {
-        await Promise.all(localStream.getAudioTracks()
+        const constraintResults = await Promise.allSettled(localStream.getAudioTracks()
             .map(track => track.applyConstraints(getAudioConstraints())));
+        for (const result of constraintResults) {
+            if (result.status === "rejected") {
+                console.warn("Unable to change microphone capture quality without restarting the track", result.reason);
+            }
+        }
     }
 
-    await Promise.all([...peers.values()]
+    const senderResults = await Promise.allSettled([...peers.values()]
         .flatMap(peer => peer.connection.getSenders())
         .filter(sender => sender.track?.kind === "audio")
         .map(applySenderAudioQuality));
+    const senderFailure = senderResults.find(result => result.status === "rejected");
+    if (senderFailure) {
+        throw senderFailure.reason;
+    }
 
     if (qualityChanged) {
         notifyAudioQualityChanged();
@@ -388,7 +398,9 @@ async function applySenderAudioQuality(sender) {
     if (!parameters.encodings?.length) {
         parameters.encodings = [{}];
     }
-    parameters.encodings[0].maxBitrate = audioQualityProfiles[audioQuality].maxBitrate;
+    for (const encoding of parameters.encodings) {
+        encoding.maxBitrate = audioQualityProfiles[audioQuality].maxBitrate;
+    }
     await sender.setParameters(parameters);
 }
 

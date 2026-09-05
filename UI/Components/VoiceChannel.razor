@@ -270,7 +270,15 @@
     {
         if (_joined && _module != null)
         {
-            await _module.InvokeVoidAsync("setAudioQuality", _audioQuality);
+            try
+            {
+                _effectiveAudioQuality = await _module.InvokeAsync<string>("setAudioQuality", _audioQuality);
+                _error = null;
+            }
+            catch (Exception exception)
+            {
+                _error = $"Unable to change audio quality: {exception.Message}";
+            }
         }
     }
 
