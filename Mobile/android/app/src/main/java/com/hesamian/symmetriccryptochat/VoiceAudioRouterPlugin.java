@@ -13,6 +13,7 @@ import android.os.Build;
 import android.os.PowerManager;
 import android.provider.Settings;
 import android.net.Uri;
+import android.util.Log;
 
 import com.getcapacitor.JSObject;
 import com.getcapacitor.PermissionState;
@@ -28,6 +29,7 @@ import com.getcapacitor.annotation.PermissionCallback;
     permissions = @Permission(alias = "notifications", strings = { Manifest.permission.POST_NOTIFICATIONS })
 )
 public class VoiceAudioRouterPlugin extends Plugin implements SensorEventListener {
+    private static final String TAG = "VoiceAudioRouter";
     private AudioManager audioManager;
     private SensorManager sensorManager;
     private Sensor proximitySensor;
@@ -91,15 +93,19 @@ public class VoiceAudioRouterPlugin extends Plugin implements SensorEventListene
     public void startCall(PluginCall call) {
         try {
             VoiceCallService.setCallActive(getContext(), true);
-            call.resolve();
         } catch (Exception exception) {
-            call.reject("Unable to keep the voice call active in the background", null, exception);
+            Log.w(TAG, "Unable to keep the voice call active in the background", exception);
         }
+        call.resolve();
     }
 
     @PluginMethod
     public void stopCall(PluginCall call) {
-        VoiceCallService.setCallActive(getContext(), false);
+        try {
+            VoiceCallService.setCallActive(getContext(), false);
+        } catch (Exception exception) {
+            Log.w(TAG, "Unable to update the background call state", exception);
+        }
         call.resolve();
     }
 

@@ -14,7 +14,7 @@ namespace UI;
 
 public sealed class SignalRStateManager : AuthenticationStateProvider, IDisposable, ITypedClient
 {
-    private const string VoiceModulePath = "./js/voice-chat.js?v=20260905-1";
+    private const string VoiceModulePath = "./js/voice-chat.js?v=20260905-2";
 
     public event Func<string, string, Task>? VoiceOfferReceived;
     public event Func<string, string, Task>? VoiceAnswerReceived;
@@ -263,9 +263,9 @@ public sealed class SignalRStateManager : AuthenticationStateProvider, IDisposab
         return _server.CheckTurnHealth();
     }
 
-    public Task RingVoice(string targetConnectionId)
+    public Task<string> RingVoice(string targetClientInstanceId)
     {
-        return _server.RingVoice(targetConnectionId);
+        return _server.RingVoice(targetClientInstanceId);
     }
 
     public Task CancelVoiceCall(string targetConnectionId, bool timedOut = false)

@@ -58,10 +58,18 @@ export async function initialize(reference, container, turnCredentials, password
     });
     const nativeAudioRouter = getNativeAudioRouter();
     if (typeof nativeAudioRouter?.startCall === "function") {
-        await nativeAudioRouter.startCall();
+        try {
+            await nativeAudioRouter.startCall();
+        } catch (error) {
+            console.warn("Unable to enable native background call mode", error);
+        }
     }
     if (nativeAudioRouter || "audioSession" in navigator) {
-        await setAudioOutputMode("auto");
+        try {
+            await setAudioOutputMode("auto");
+        } catch (error) {
+            console.warn("Unable to set the initial audio output mode", error);
+        }
     }
     document.removeEventListener("visibilitychange", handleVisibilityChange);
     document.addEventListener("visibilitychange", handleVisibilityChange);

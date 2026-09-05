@@ -23,7 +23,7 @@ namespace Models.Hub
 
         Task<TurnHealthStatus> CheckTurnHealth();
 
-        Task RingVoice(string targetConnectionId);
+        Task<string> RingVoice(string targetClientInstanceId);
 
         Task CancelVoiceCall(string targetConnectionId, bool timedOut);
 

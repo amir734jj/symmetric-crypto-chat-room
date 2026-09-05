@@ -238,9 +238,10 @@ namespace DomainLogic
             return _turnHealthChecker.CheckAsync();
         }
 
-        public async Task RingVoice(string targetConnectionId)
+        public async Task<string> RingVoice(string targetClientInstanceId)
         {
             var caller = GetCurrentUser();
+            var targetConnectionId = ResolveClientConnection(targetClientInstanceId, caller.Channel);
             var target = GetUserInSameChannel(targetConnectionId, caller.Channel);
             Debug.Assert(target.Channel == caller.Channel);
             if (targetConnectionId == Context.ConnectionId)
@@ -262,6 +263,8 @@ namespace DomainLogic
                 TryRemovePendingCall(targetConnectionId, Context.ConnectionId);
                 throw;
             }
+
+            return targetConnectionId;
         }
 
         public Task CancelVoiceCall(string targetConnectionId, bool timedOut)
@@ -363,6 +366,30 @@ namespace DomainLogic
                 BackgroundUsers.TryGetValue(connectionId, out user);
         }
 
+        private static string ResolveClientConnection(string clientInstanceId, string channel)
+        {
+            if (ClientConnections.TryGetValue(clientInstanceId, out var foregroundConnectionId) &&
+                Users.TryGetValue(foregroundConnectionId, out var foregroundUser) &&
+                foregroundUser.Channel == channel)
+            {
+                return foregroundConnectionId;
+            }
+
+            if (BackgroundClientConnections.TryGetValue(clientInstanceId, out var backgroundConnectionId) &&
+                BackgroundUsers.TryGetValue(backgroundConnectionId, out var backgroundUser) &&
+                backgroundUser.Channel == channel)
+            {
+                return backgroundConnectionId;
+            }
+
+            if (TryGetUser(clientInstanceId, out var legacyUser) && legacyUser.Channel == channel)
+            {
+                return clientInstanceId;
+            }
+
+            throw new HubException("User is not online in the same channel");
+        }
+
         private static string ClaimClientConnection(
             ConcurrentDictionary<string, string> connections,
             string clientInstanceId,
@@ -430,14 +457,15 @@ namespace DomainLogic
                 .ToHashSet();
             var users = Users
                 .Where(x => x.Value.Channel == channel)
-                .Select(x => new { ConnectionId = x.Key, x.Value.Name, x.Value.JoinedOrder })
+                .Select(x => new { ConnectionId = x.Key, x.Value.ClientInstanceId, x.Value.Name, x.Value.JoinedOrder })
                 .Concat(BackgroundUsers
                     .Where(x => x.Value.Channel == channel && !foregroundClientIds.Contains(x.Value.ClientInstanceId))
-                    .Select(x => new { ConnectionId = x.Key, x.Value.Name, x.Value.JoinedOrder }))
+                    .Select(x => new { ConnectionId = x.Key, x.Value.ClientInstanceId, x.Value.Name, x.Value.JoinedOrder }))
                 .OrderByDescending(x => x.JoinedOrder)
                 .Select(x => new OnlineUser
                 {
                     ConnectionId = x.ConnectionId,
+                    ClientInstanceId = x.ClientInstanceId,
                     Name = x.Name
                 })
                 .ToList();

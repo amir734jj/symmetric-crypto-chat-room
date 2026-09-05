@@ -170,7 +170,7 @@
 </section>
 
 @code {
-    private const string VoiceModulePath = "./js/voice-chat.js?v=20260905-1";
+    private const string VoiceModulePath = "./js/voice-chat.js?v=20260905-2";
 
     private static readonly TimeSpan RingTimeout = TimeSpan.FromSeconds(30);
     private readonly HashSet<string> _participantIds = [];
@@ -373,11 +373,11 @@
 
         try
         {
-            await SignalRStateManager.RingVoice(user.ConnectionId);
-            _outgoingCallConnectionId = user.ConnectionId;
+            var targetConnectionId = await SignalRStateManager.RingVoice(user.ClientInstanceId);
+            _outgoingCallConnectionId = targetConnectionId;
             _outgoingCallName = user.Name;
             _callStatus = $"Ringing {user.Name}... (30 seconds)";
-            StartOutgoingCallTimeout(user.ConnectionId, user.Name);
+            StartOutgoingCallTimeout(targetConnectionId, user.Name);
         }
         catch (Exception exception)
         {
