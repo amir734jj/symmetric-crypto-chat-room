@@ -28,6 +28,8 @@ Microphone audio uses real-time echo cancellation, noise suppression, and automa
 
 While voice is active, supported mobile browsers keep the screen awake and use their communication audio-session mode. Manually locking the device can still suspend a browser call when the mobile operating system does not allow background microphone or WebRTC activity.
 
+Browsers that support audio-output selection show an in-call **Audio output** button for choosing the phone earpiece, speaker, wired headphones, or Bluetooth device through the system picker. Browsers without this API, including versions of iOS Safari that only follow system routing, hide the button.
+
 `TURN_RELAY_ONLY` defaults to `true`. In this mode WebRTC uses `iceTransportPolicy: "relay"`, so voice fails instead of connecting directly when the configured coturn service is unavailable. Set it to `false` only when direct peer-to-peer paths through the configured STUN server are acceptable.
 
 Set `TURN_EXTERNAL_IP` on the coturn service to its Docker host's public IPv4 address. Also publish and allow TCP/UDP 3478 and UDP 49160-49200 through the host firewall and network security rules. Set `TURN_HOST` on the chat service to the public DNS name clients should use.

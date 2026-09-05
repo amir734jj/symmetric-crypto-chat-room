@@ -12,6 +12,7 @@ let goodNetworkSamples = 0;
 let poorNetworkSamples = 0;
 let adaptationInProgress = false;
 let screenWakeLock;
+let selectedAudioOutputId = "";
 const peers = new Map();
 const audioQualityProfiles = {
     low: { sampleRate: 16000, maxBitrate: 16000 },
@@ -109,6 +110,23 @@ export function setMuted(muted) {
     for (const track of localStream.getAudioTracks()) {
         track.enabled = !muted;
     }
+}
+
+export function supportsAudioOutputSelection() {
+    return typeof navigator.mediaDevices.selectAudioOutput === "function" &&
+        typeof HTMLMediaElement.prototype.setSinkId === "function";
+}
+
+export async function chooseAudioOutput() {
+    if (!supportsAudioOutputSelection()) {
+        throw new Error("Audio output selection is not supported by this browser");
+    }
+
+    const options = selectedAudioOutputId ? { deviceId: selectedAudioOutputId } : undefined;
+    const output = await navigator.mediaDevices.selectAudioOutput(options);
+    await Promise.all([...peers.values()].map(peer => peer.audio.setSinkId(output.deviceId)));
+    selectedAudioOutputId = output.deviceId;
+    return output.label || "Selected output";
 }
 
 export async function setAudioQuality(selectedAudioQuality) {
@@ -217,7 +235,9 @@ export async function getConnectionDiagnostics() {
         mobileCallSupport: {
             screenWakeLockSupported: "wakeLock" in navigator,
             screenWakeLockActive: Boolean(screenWakeLock && !screenWakeLock.released),
-            communicationAudioSession: navigator.audioSession?.type ?? "unsupported"
+            communicationAudioSession: navigator.audioSession?.type ?? "unsupported",
+            audioOutputSelectionSupported: supportsAudioOutputSelection(),
+            selectedAudioOutputId: selectedAudioOutputId || "default"
         },
         iceTransportPolicy: peerConfiguration?.iceTransportPolicy,
         configuredIceServers: peerConfiguration?.iceServers.map(server => server.urls),
@@ -257,6 +277,7 @@ export function leave() {
     dotNetReference = undefined;
     voiceKey = undefined;
     localConnectionId = undefined;
+    selectedAudioOutputId = "";
     encryptionWorker?.terminate();
     encryptionWorker = undefined;
 }
@@ -320,6 +341,9 @@ async function createPeer(connectionId) {
     const audio = document.createElement("audio");
     audio.autoplay = true;
     audio.playsInline = true;
+    if (selectedAudioOutputId && typeof audio.setSinkId === "function") {
+        await audio.setSinkId(selectedAudioOutputId);
+    }
     remoteAudioContainer.appendChild(audio);
 
     const peer = { connection, audio, pendingCandidates: [] };

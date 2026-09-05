@@ -35,6 +35,12 @@
             }
             else
             {
+                @if (_audioOutputSelectionSupported)
+                {
+                    <HxButton Color="ThemeColor.Secondary" OnClick="ChooseAudioOutput">
+                        Audio output
+                    </HxButton>
+                }
                 <HxButton Color="ThemeColor.Secondary" OnClick="ToggleMute">
                     @(_muted ? "Unmute" : "Mute")
                 </HxButton>
@@ -152,6 +158,7 @@
     private bool _busy;
     private bool _checkingTurn;
     private bool _showDebug;
+    private bool _audioOutputSelectionSupported;
     private string? _error;
     private string? _debugInfo;
     private string? _incomingCallerConnectionId;
@@ -237,6 +244,7 @@
                 turnCredentials,
                 voiceKey,
                 _audioQuality);
+            _audioOutputSelectionSupported = await _module.InvokeAsync<bool>("supportsAudioOutputSelection");
 
             var participants = await SignalRStateManager.JoinVoice();
             _joined = true;
@@ -264,6 +272,22 @@
     {
         _muted = !_muted;
         await _module!.InvokeVoidAsync("setMuted", _muted);
+    }
+
+    private async Task ChooseAudioOutput()
+    {
+        if (_module == null) return;
+
+        try
+        {
+            var outputLabel = await _module.InvokeAsync<string>("chooseAudioOutput");
+            _callStatus = $"Audio output: {outputLabel}";
+            _error = null;
+        }
+        catch (Exception exception)
+        {
+            _error = $"Unable to change audio output: {exception.Message}";
+        }
     }
 
     private async Task AudioQualityChanged()
@@ -595,6 +619,7 @@
         _joined = false;
         _muted = false;
         _showDebug = false;
+        _audioOutputSelectionSupported = false;
         _debugInfo = null;
     }
 
