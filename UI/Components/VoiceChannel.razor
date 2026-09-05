@@ -35,25 +35,34 @@
             }
             else
             {
-                @if (_audioOutputSelectionSupported)
+                @if (_usesAudioSessionOutputModes)
                 {
-                    @if (_usesAudioSessionOutputModes)
-                    {
-                        <label class="voice-quality">
-                            <span>Audio output</span>
-                            <select class="form-select form-select-sm" @bind="_audioOutputMode" @bind:after="AudioOutputModeChanged">
-                                <option value="auto">Auto (proximity)</option>
-                                <option value="earpiece">Always earpiece</option>
-                                <option value="speaker">Always speaker</option>
-                            </select>
-                        </label>
-                    }
-                    else
-                    {
-                        <HxButton Color="ThemeColor.Secondary" OnClick="ChooseAudioOutput">
-                            Choose output
-                        </HxButton>
-                    }
+                    <label class="voice-quality">
+                        <span>Audio output</span>
+                        <select class="form-select form-select-sm" @bind="_audioOutputMode" @bind:after="AudioOutputModeChanged">
+                            <option value="auto">Auto (proximity)</option>
+                            <option value="earpiece">Always earpiece</option>
+                            <option value="speaker">Always speaker</option>
+                        </select>
+                    </label>
+                }
+                else if (_audioOutputSelectionSupported)
+                {
+                    <HxButton Color="ThemeColor.Secondary" OnClick="ChooseAudioOutput">
+                        Choose output
+                    </HxButton>
+                }
+                else
+                {
+                    <label class="voice-quality" title="This browser does not allow websites to change the phone audio route">
+                        <span>Audio output</span>
+                        <select class="form-select form-select-sm" disabled>
+                            <option>Auto (browser controlled)</option>
+                            <option>Always earpiece</option>
+                            <option>Always speaker</option>
+                        </select>
+                    </label>
+                    <span class="voice-output-note text-muted">Speaker and earpiece selection is unavailable in this browser.</span>
                 }
                 <HxButton Color="ThemeColor.Secondary" OnClick="ToggleMute">
                     @(_muted ? "Unmute" : "Mute")

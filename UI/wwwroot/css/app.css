@@ -74,6 +74,13 @@ pre {
     min-width: 7.5rem;
 }
 
+.voice-output-note {
+    align-self: center;
+    flex-basis: 100%;
+    font-size: 0.875rem;
+    text-align: right;
+}
+
 .voice-health-message {
     overflow-wrap: anywhere;
 }
@@ -145,6 +152,10 @@ pre {
 
     .voice-channel-actions {
         justify-content: flex-start;
+    }
+
+    .voice-output-note {
+        text-align: left;
     }
 
     .voice-call-alert {
