@@ -12,7 +12,6 @@ using UI;
 
 RxAppBuilder.CreateReactiveUIBuilder()
     .WithCoreServices()
-    .WithPlatformServices()
     .BuildApp();
 
 var builder = WebAssemblyHostBuilder.CreateDefault(args);
