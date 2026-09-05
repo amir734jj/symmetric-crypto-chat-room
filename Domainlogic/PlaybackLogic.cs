@@ -7,7 +7,7 @@ using LiteDB;
 using Models;
 using Models.Constants;
 
-namespace Domainlogic;
+namespace DomainLogic;
 
 public sealed class PlaybackLogic : IDisposable
 {

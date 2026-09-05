@@ -1,6 +1,6 @@
 ﻿using System;
 using ByteSizeLib;
-using Domainlogic;
+using DomainLogic;
 using LiteDB;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Hosting;
