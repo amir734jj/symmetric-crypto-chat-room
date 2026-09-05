@@ -42,6 +42,8 @@ Microphone access requires a secure browser context. Use a trusted HTTPS certifi
 
 The `Mobile` Capacitor project packages the deployed web application in an Android WebView and adds native speaker, earpiece, and proximity-based routing. Auto mode preserves wired or Bluetooth communication devices and otherwise switches between the built-in earpiece and speaker using the phone's proximity sensor.
 
+An active Android voice call runs with a microphone foreground service and an ongoing notification, allowing the call to continue when the app is minimized. Swiping the app away or leaving voice stops the service and ends background operation. This does not receive new calls after Android has suspended or killed the app; reliable wake-up for new incoming calls would require a push service, which is intentionally not configured.
+
 Every push to `master` updates the single `latest` GitHub release and replaces its `symmetric-crypto-chat-latest.apk` asset. Without signing secrets, the workflow publishes a debug-signed APK. Configure all four repository secrets below to publish an upgradeable release-signed APK:
 
 ```text

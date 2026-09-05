@@ -56,7 +56,11 @@ export async function initialize(reference, container, turnCredentials, password
         audio: getAudioConstraints(),
         video: false
     });
-    if (getNativeAudioRouter() || "audioSession" in navigator) {
+    const nativeAudioRouter = getNativeAudioRouter();
+    if (nativeAudioRouter) {
+        await nativeAudioRouter.startCall();
+    }
+    if (nativeAudioRouter || "audioSession" in navigator) {
         await setAudioOutputMode("auto");
     }
     document.removeEventListener("visibilitychange", handleVisibilityChange);
@@ -323,10 +327,16 @@ export async function leave() {
     releaseScreenWakeLock();
     stopProximityRouting();
     setAudioSessionType("auto");
+    const nativeAudioRouter = getNativeAudioRouter();
     try {
-        await getNativeAudioRouter()?.reset();
+        await nativeAudioRouter?.reset();
     } catch (error) {
         console.warn("Unable to reset native audio routing", error);
+    }
+    try {
+        await nativeAudioRouter?.stopCall();
+    } catch (error) {
+        console.warn("Unable to stop native background call handling", error);
     }
 
     for (const connectionId of [...peers.keys()]) {

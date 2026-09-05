@@ -1,6 +1,8 @@
 package com.hesamian.symmetriccryptochat;
 
+import android.Manifest;
 import android.content.Context;
+import android.content.pm.PackageManager;
 import android.hardware.Sensor;
 import android.hardware.SensorEvent;
 import android.hardware.SensorEventListener;
@@ -8,6 +10,9 @@ import android.hardware.SensorManager;
 import android.media.AudioDeviceInfo;
 import android.media.AudioManager;
 import android.os.Build;
+
+import androidx.core.app.ActivityCompat;
+import androidx.core.content.ContextCompat;
 
 import com.getcapacitor.JSObject;
 import com.getcapacitor.Plugin;
@@ -17,6 +22,8 @@ import com.getcapacitor.annotation.CapacitorPlugin;
 
 @CapacitorPlugin(name = "VoiceAudioRouter")
 public class VoiceAudioRouterPlugin extends Plugin implements SensorEventListener {
+    private static final int NOTIFICATION_PERMISSION_REQUEST = 1001;
+
     private AudioManager audioManager;
     private SensorManager sensorManager;
     private Sensor proximitySensor;
@@ -73,6 +80,29 @@ public class VoiceAudioRouterPlugin extends Plugin implements SensorEventListene
     @PluginMethod
     public void reset(PluginCall call) {
         resetRouting();
+        call.resolve();
+    }
+
+    @PluginMethod
+    public void startCall(PluginCall call) {
+        try {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
+                ContextCompat.checkSelfPermission(getContext(), Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED) {
+                ActivityCompat.requestPermissions(
+                    getActivity(),
+                    new String[] { Manifest.permission.POST_NOTIFICATIONS },
+                    NOTIFICATION_PERMISSION_REQUEST);
+            }
+            VoiceCallService.start(getContext());
+            call.resolve();
+        } catch (Exception exception) {
+            call.reject("Unable to keep the voice call active in the background", null, exception);
+        }
+    }
+
+    @PluginMethod
+    public void stopCall(PluginCall call) {
+        VoiceCallService.stop(getContext());
         call.resolve();
     }
 
