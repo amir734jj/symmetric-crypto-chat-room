@@ -53,7 +53,7 @@ ANDROID_KEY_PASSWORD
 
 Generate a release keystore once, Base64-encode the entire keystore file, and store that value in `ANDROID_KEYSTORE_BASE64`. Keep the same keystore for every build; changing it prevents Android from installing a new APK over an existing installation. GitHub Release immutability must remain disabled because the workflow intentionally replaces the asset in the rolling release.
 
-The Android shell currently loads `https://at.coolify.hesamian.com`, configured in `Mobile/capacitor.config.json`. The device must have an up-to-date Android System WebView that supports `RTCRtpScriptTransform`, which remains required for encrypted voice.
+The Android shell currently loads `https://chat.coolify.hesamian.com/login`, configured in `Mobile/capacitor.config.json`. The device must have an up-to-date Android System WebView that supports `RTCRtpScriptTransform`, which remains required for encrypted voice.
 
 #### Coolify
 

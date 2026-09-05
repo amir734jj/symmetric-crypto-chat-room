@@ -4,7 +4,8 @@
   "webDir": "www",
   "loggingBehavior": "debug",
   "server": {
-    "url": "https://at.coolify.hesamian.com",
+    "url": "https://chat.coolify.hesamian.com",
+    "appStartPath": "/login",
     "cleartext": false
   },
   "android": {
