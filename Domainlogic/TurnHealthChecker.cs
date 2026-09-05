@@ -8,7 +8,7 @@ using System.Threading;
 using System.Threading.Tasks;
 using Models;
 
-namespace Domainlogic;
+namespace DomainLogic;
 
 public sealed class TurnHealthChecker
 {

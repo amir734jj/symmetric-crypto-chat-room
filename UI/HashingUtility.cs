@@ -4,9 +4,9 @@ using Org.BouncyCastle.Crypto.Digests;
 
 namespace UI;
 
-public class HashingUtility
+public static class HashingUtility
 {
-    public byte[] HashString(string keyMaterial)
+    public static byte[] HashString(string keyMaterial)
     {
         // Key derivation via SHA256
         var keyMaterialBytes = Encoding.UTF8.GetBytes(keyMaterial);
@@ -18,7 +18,7 @@ public class HashingUtility
         return keyBytes;
     }
 
-    public byte[] DeriveVoiceKey(string password, string channel)
+    public static byte[] DeriveVoiceKey(string password, string channel)
     {
         return Rfc2898DeriveBytes.Pbkdf2(
             password,

@@ -9,7 +9,7 @@ using Microsoft.AspNetCore.SignalR;
 using Models;
 using Models.Hub;
 
-namespace Domainlogic
+namespace DomainLogic
 {
     public class MessageHub : Hub<ITypedClient>, ITypedServer
     {

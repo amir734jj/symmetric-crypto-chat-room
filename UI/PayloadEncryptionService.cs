@@ -4,14 +4,13 @@ namespace UI;
 
 public class PayloadEncryptionService(
     SymmetricCryptography symmetricCryptography,
-    HashingUtility hashingUtility,
     ILogger<PayloadEncryptionService> logger)
 {
     public MessagePayload EncryptPayload(string password, MessagePayload payload)
     {
         logger.LogTrace("Starting payload encryption process");
 
-        var keyMaterial = hashingUtility.HashString(password);
+        var keyMaterial = HashingUtility.HashString(password);
 
         // Only set during encryption
         payload.Token = symmetricCryptography.Encrypt(keyMaterial, Convert.ToBase64String(keyMaterial));
@@ -32,7 +31,7 @@ public class PayloadEncryptionService(
     {
         logger.LogTrace("Starting payload decryption process");
 
-        var keyMaterial = hashingUtility.HashString(password);
+        var keyMaterial = HashingUtility.HashString(password);
 
         payload.Message = symmetricCryptography.Decrypt(keyMaterial, payload.Message);
 
@@ -49,7 +48,7 @@ public class PayloadEncryptionService(
     
     public bool PayloadIsValid(string password, string token)
     {
-        var keyMaterial = hashingUtility.HashString(password);
+        var keyMaterial = HashingUtility.HashString(password);
         
         return symmetricCryptography.Encrypt(keyMaterial, Convert.ToBase64String(keyMaterial)) == token;
     }
