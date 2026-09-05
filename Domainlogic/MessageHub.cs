@@ -218,11 +218,14 @@ namespace DomainLogic
         public Task CancelVoiceCall(string targetConnectionId, bool timedOut)
         {
             var caller = GetCurrentUser();
-            GetUserInSameChannel(targetConnectionId, caller.Channel);
+            if (!TryRemovePendingCall(targetConnectionId, Context.ConnectionId) ||
+                !Users.TryGetValue(targetConnectionId, out var target) ||
+                target.Channel != caller.Channel)
+            {
+                return Task.CompletedTask;
+            }
 
-            return TryRemovePendingCall(targetConnectionId, Context.ConnectionId)
-                ? Clients.Client(targetConnectionId).VoiceCallCancelled(Context.ConnectionId, timedOut)
-                : Task.CompletedTask;
+            return Clients.Client(targetConnectionId).VoiceCallCancelled(Context.ConnectionId, timedOut);
         }
 
         public Task RespondVoiceCall(string callerConnectionId, bool accepted)
