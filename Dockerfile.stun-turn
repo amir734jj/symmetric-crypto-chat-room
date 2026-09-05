@@ -6,5 +6,8 @@ ENV TURN_REALM=chat.coolify.hesamian.com \
 
 EXPOSE 3478/tcp 3478/udp 49160-49200/udp
 
+HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
+    CMD turnutils_stunclient -p 3478 127.0.0.1 || exit 1
+
 ENTRYPOINT ["/bin/sh", "-ec"]
 CMD [": \"${TURN_SECRET:?TURN_SECRET must be set}\"; : \"${TURN_EXTERNAL_IP:?TURN_EXTERNAL_IP must be set}\"; exec turnserver --no-cli --fingerprint --use-auth-secret --static-auth-secret=\"$TURN_SECRET\" --realm=\"$TURN_REALM\" --external-ip=\"$TURN_EXTERNAL_IP\" --listening-port=3478 --min-port=\"$TURN_MIN_PORT\" --max-port=\"$TURN_MAX_PORT\" --log-file=stdout"]
