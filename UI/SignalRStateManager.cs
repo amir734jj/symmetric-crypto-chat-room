@@ -36,9 +36,12 @@ public sealed class SignalRStateManager : AuthenticationStateProvider, IDisposab
     // ReSharper disable once InconsistentNaming
     private const string SESSION_KEY = "SYMMETRIC_CRYPTO_SESSION_KEY";
 
+    private const string CLIENT_INSTANCE_ID_KEY = "SYMMETRIC_CRYPTO_CLIENT_INSTANCE_ID";
+
     private readonly State _state;
     private readonly ITypedServer _server;
     private readonly HubConnection _hubConnection;
+    private readonly string _clientInstanceId;
 
     public SignalRStateManager(
         HubConnection hubConnection,
@@ -54,6 +57,10 @@ public sealed class SignalRStateManager : AuthenticationStateProvider, IDisposab
         _navigation = navigation;
         _logger = logger;
         _state = state;
+        _clientInstanceId = sessionStorageService.ContainKey(CLIENT_INSTANCE_ID_KEY)
+            ? sessionStorageService.GetItem<string>(CLIENT_INSTANCE_ID_KEY)
+            : Guid.NewGuid().ToString("N");
+        sessionStorageService.SetItem(CLIENT_INSTANCE_ID_KEY, _clientInstanceId);
 
         _state.PropertyChanged += StateChangedHandler;
 
@@ -66,7 +73,7 @@ public sealed class SignalRStateManager : AuthenticationStateProvider, IDisposab
     {
         if (_state.UserInfo != null)
         {
-            await _server.Rejoin(_state.UserInfo.Channel, _state.UserInfo.Name);
+            await _server.Rejoin(_state.UserInfo.Channel, _state.UserInfo.Name, _clientInstanceId);
             if (ConnectionReconnected != null)
             {
                 await ConnectionReconnected.Invoke();
@@ -136,7 +143,7 @@ public sealed class SignalRStateManager : AuthenticationStateProvider, IDisposab
         
         _sessionStorageService.SetItem(SESSION_KEY, login);
         
-        await _server.Join(login.Channel, login.Name);
+        await _server.Join(login.Channel, login.Name, _clientInstanceId);
         
         NotifyAuthenticationStateChanged(GetAuthenticationStateAsync());
     }

@@ -5,6 +5,7 @@ using System.Diagnostics;
 using System.Linq;
 using System.Security.Cryptography;
 using System.Text;
+using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.AspNetCore.SignalR;
 using Models;
@@ -18,7 +19,11 @@ namespace DomainLogic
 
         private readonly TurnHealthChecker _turnHealthChecker;
 
-        private static readonly ConcurrentDictionary<string, (string Channel, string Name)> Users = new();
+        private static readonly ConcurrentDictionary<string, (string Channel, string Name, string ClientInstanceId, long JoinedOrder)> Users = new();
+
+        private static readonly ConcurrentDictionary<string, string> ClientConnections = new();
+
+        private static long _joinedOrder;
 
         private static readonly ConcurrentDictionary<string, byte> VoiceUsers = new();
 
@@ -59,9 +64,9 @@ namespace DomainLogic
             await Clients.Group(message.Channel).Inbox(message);
         }
         
-        public async Task Join(string channel, string name)
+        public async Task Join(string channel, string name, string clientInstanceId)
         {
-            await JoinRoom(channel, name);
+            await JoinRoom(channel, name, clientInstanceId);
 
             foreach (var messagePayload in _playbackLogic.GetMessages(channel))
             {
@@ -69,49 +74,68 @@ namespace DomainLogic
             }
         }
 
-        public Task Rejoin(string channel, string name)
+        public Task Rejoin(string channel, string name, string clientInstanceId)
         {
-            return JoinRoom(channel, name);
+            return JoinRoom(channel, name, clientInstanceId);
         }
 
-        private async Task JoinRoom(string channel, string name)
+        private async Task JoinRoom(string channel, string name, string clientInstanceId)
         {
+            if (string.IsNullOrWhiteSpace(clientInstanceId) || clientInstanceId.Length > 128)
+            {
+                throw new HubException("Client instance ID is invalid");
+            }
+
             await Leave();
+
+            var staleConnectionId = ClaimClientConnection(clientInstanceId, Context.ConnectionId);
+            if (staleConnectionId != null)
+            {
+                await RemoveConnection(staleConnectionId);
+            }
 
             await Groups.AddToGroupAsync(Context.ConnectionId, channel);
 
-            Users[Context.ConnectionId] = (channel, name);
+            Users[Context.ConnectionId] = (channel, name, clientInstanceId, Interlocked.Increment(ref _joinedOrder));
             
             await NotifyAll(channel, MessageTypeEnum.Joined);
         }
 
-        public async Task Leave()
+        public Task Leave()
         {
-            if (!Users.TryRemove(Context.ConnectionId, out var userInfo))
+            return RemoveConnection(Context.ConnectionId);
+        }
+
+        private async Task RemoveConnection(string connectionId)
+        {
+            if (!Users.TryRemove(connectionId, out var userInfo))
             {
                 return;
             }
 
-            if (PendingVoiceCalls.TryRemove(Context.ConnectionId, out var callerConnectionId))
+            ((ICollection<KeyValuePair<string, string>>)ClientConnections)
+                .Remove(new KeyValuePair<string, string>(userInfo.ClientInstanceId, connectionId));
+
+            if (PendingVoiceCalls.TryRemove(connectionId, out var callerConnectionId))
             {
                 await Clients.Client(callerConnectionId)
-                    .VoiceCallResponded(Context.ConnectionId, userInfo.Name, false);
+                    .VoiceCallResponded(connectionId, userInfo.Name, false);
             }
 
-            foreach (var pendingCall in PendingVoiceCalls.Where(call => call.Value == Context.ConnectionId))
+            foreach (var pendingCall in PendingVoiceCalls.Where(call => call.Value == connectionId))
             {
-                if (TryRemovePendingCall(pendingCall.Key, Context.ConnectionId))
+                if (TryRemovePendingCall(pendingCall.Key, connectionId))
                 {
-                    await Clients.Client(pendingCall.Key).VoiceCallCancelled(Context.ConnectionId);
+                    await Clients.Client(pendingCall.Key).VoiceCallCancelled(connectionId);
                 }
             }
 
-            if (VoiceUsers.TryRemove(Context.ConnectionId, out _))
+            if (VoiceUsers.TryRemove(connectionId, out _))
             {
-                await Clients.Group(userInfo.Channel).VoiceParticipantLeft(Context.ConnectionId);
+                await Clients.Group(userInfo.Channel).VoiceParticipantLeft(connectionId);
             }
 
-            await Groups.RemoveFromGroupAsync(Context.ConnectionId, userInfo.Channel);
+            await Groups.RemoveFromGroupAsync(connectionId, userInfo.Channel);
             await NotifyAll(userInfo.Channel, MessageTypeEnum.Left);
         }
 
@@ -241,7 +265,7 @@ namespace DomainLogic
             return Clients.Client(targetConnectionId).ReceiveVoiceIceCandidate(Context.ConnectionId, candidate);
         }
 
-        private (string Channel, string Name) GetCurrentUser()
+        private (string Channel, string Name, string ClientInstanceId, long JoinedOrder) GetCurrentUser()
         {
             if (!Users.TryGetValue(Context.ConnectionId, out var userInfo))
             {
@@ -263,7 +287,7 @@ namespace DomainLogic
             }
         }
 
-        private static (string Channel, string Name) GetUserInSameChannel(string connectionId, string channel)
+        private static (string Channel, string Name, string ClientInstanceId, long JoinedOrder) GetUserInSameChannel(string connectionId, string channel)
         {
             if (!Users.TryGetValue(connectionId, out var user) || user.Channel != channel)
             {
@@ -279,10 +303,33 @@ namespace DomainLogic
                 .Remove(new KeyValuePair<string, string>(targetConnectionId, callerConnectionId));
         }
 
+        private static string? ClaimClientConnection(string clientInstanceId, string connectionId)
+        {
+            while (true)
+            {
+                if (ClientConnections.TryAdd(clientInstanceId, connectionId))
+                {
+                    return null;
+                }
+
+                var previousConnectionId = ClientConnections[clientInstanceId];
+                if (previousConnectionId == connectionId)
+                {
+                    return null;
+                }
+
+                if (ClientConnections.TryUpdate(clientInstanceId, connectionId, previousConnectionId))
+                {
+                    return previousConnectionId;
+                }
+            }
+        }
+
         private async Task NotifyAll(string channel, MessageTypeEnum type)
         {
             var users = Users
                 .Where(x => x.Value.Channel == channel)
+                .OrderByDescending(x => x.Value.JoinedOrder)
                 .Select(x => new OnlineUser
                 {
                     ConnectionId = x.Key,

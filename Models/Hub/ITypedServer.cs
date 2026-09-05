@@ -7,9 +7,9 @@ namespace Models.Hub
     {
         Task Send(MessagePayload message);
 
-        Task Join(string channel, string name);
+        Task Join(string channel, string name, string clientInstanceId);
 
-        Task Rejoin(string channel, string name);
+        Task Rejoin(string channel, string name, string clientInstanceId);
 
         Task Leave();
 
