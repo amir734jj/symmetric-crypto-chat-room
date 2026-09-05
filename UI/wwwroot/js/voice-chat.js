@@ -11,6 +11,7 @@ let adaptationTimer;
 let goodNetworkSamples = 0;
 let poorNetworkSamples = 0;
 let adaptationInProgress = false;
+let screenWakeLock;
 const peers = new Map();
 const audioQualityProfiles = {
     low: { sampleRate: 16000, maxBitrate: 16000 },
@@ -51,6 +52,10 @@ export async function initialize(reference, container, turnCredentials, password
         audio: getAudioConstraints(),
         video: false
     });
+    setAudioSessionType("play-and-record");
+    document.removeEventListener("visibilitychange", handleVisibilityChange);
+    document.addEventListener("visibilitychange", handleVisibilityChange);
+    await requestScreenWakeLock();
     startQualityAdaptation();
     notifyAudioQualityChanged();
 }
@@ -199,6 +204,11 @@ export async function getConnectionDiagnostics() {
             autoGainControl: getConstraintStatus(supportedConstraints, audioSettings, "autoGainControl"),
             voiceIsolation: getConstraintStatus(supportedConstraints, audioSettings, "voiceIsolation")
         },
+        mobileCallSupport: {
+            screenWakeLockSupported: "wakeLock" in navigator,
+            screenWakeLockActive: Boolean(screenWakeLock && !screenWakeLock.released),
+            communicationAudioSession: navigator.audioSession?.type ?? "unsupported"
+        },
         iceTransportPolicy: peerConfiguration?.iceTransportPolicy,
         configuredIceServers: peerConfiguration?.iceServers.map(server => server.urls),
         peerConnections: peerDiagnostics
@@ -219,6 +229,9 @@ export function leave() {
     adaptationTimer = undefined;
     goodNetworkSamples = 0;
     poorNetworkSamples = 0;
+    document.removeEventListener("visibilitychange", handleVisibilityChange);
+    releaseScreenWakeLock();
+    setAudioSessionType("auto");
 
     for (const connectionId of [...peers.keys()]) {
         removeParticipant(connectionId);
@@ -236,6 +249,42 @@ export function leave() {
     localConnectionId = undefined;
     encryptionWorker?.terminate();
     encryptionWorker = undefined;
+}
+
+async function requestScreenWakeLock() {
+    if (!("wakeLock" in navigator) || !localStream || document.visibilityState !== "visible" ||
+        (screenWakeLock && !screenWakeLock.released)) return;
+
+    try {
+        screenWakeLock = await navigator.wakeLock.request("screen");
+        screenWakeLock.addEventListener("release", () => {
+            screenWakeLock = undefined;
+        }, { once: true });
+    } catch (error) {
+        console.warn("Unable to keep the screen awake during the voice call", error);
+    }
+}
+
+function releaseScreenWakeLock() {
+    const activeWakeLock = screenWakeLock;
+    screenWakeLock = undefined;
+    activeWakeLock?.release().catch(() => {});
+}
+
+function handleVisibilityChange() {
+    if (document.visibilityState === "visible" && localStream && !screenWakeLock) {
+        requestScreenWakeLock();
+    }
+}
+
+function setAudioSessionType(type) {
+    if (!navigator.audioSession) return;
+
+    try {
+        navigator.audioSession.type = type;
+    } catch (error) {
+        console.warn("Unable to configure the mobile audio session", error);
+    }
 }
 
 async function createPeer(connectionId) {
