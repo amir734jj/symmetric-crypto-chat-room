@@ -60,9 +60,16 @@
             {
                 <div class="voice-online-user">
                     <span>@user.Name</span>
-                    <HxButton Size="ButtonSize.Small" Color="ThemeColor.Primary" Enabled="@(!_busy && _outgoingCallConnectionId == null)" OnClick="@(() => Ring(user))">
-                        Ring
-                    </HxButton>
+                    @if (_participantIds.Contains(user.ConnectionId))
+                    {
+                        <span class="text-success">In voice</span>
+                    }
+                    else
+                    {
+                        <HxButton Size="ButtonSize.Small" Color="ThemeColor.Primary" Enabled="@(!_busy && _outgoingCallConnectionId == null)" OnClick="@(() => Ring(user))">
+                            Ring
+                        </HxButton>
+                    }
                 </div>
             }
         }
@@ -190,6 +197,12 @@
         SignalRStateManager.VoiceCallCancelledEvent += VoiceCallCancelled;
         SignalRStateManager.VoiceCallRespondedEvent += VoiceCallResponded;
         SignalRStateManager.ConnectionReconnected += ConnectionReconnected;
+        SignalRStateManager.PresenceChanged += PresenceChanged;
+    }
+
+    private Task PresenceChanged()
+    {
+        return InvokeAsync(StateHasChanged);
     }
 
     private Task ConnectionReconnected()
@@ -578,6 +591,7 @@
         SignalRStateManager.VoiceCallCancelledEvent -= VoiceCallCancelled;
         SignalRStateManager.VoiceCallRespondedEvent -= VoiceCallResponded;
         SignalRStateManager.ConnectionReconnected -= ConnectionReconnected;
+        SignalRStateManager.PresenceChanged -= PresenceChanged;
 
         await StopRingtone();
 

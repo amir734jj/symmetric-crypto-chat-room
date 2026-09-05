@@ -22,6 +22,7 @@ public sealed class SignalRStateManager : AuthenticationStateProvider, IDisposab
     public event Func<string, bool, Task>? VoiceCallCancelledEvent;
     public event Func<string, string, bool, Task>? VoiceCallRespondedEvent;
     public event Func<Task>? ConnectionReconnected;
+    public event Func<Task>? PresenceChanged;
 
     public string? ConnectionId => _hubConnection.ConnectionId;
 
@@ -282,12 +283,15 @@ public sealed class SignalRStateManager : AuthenticationStateProvider, IDisposab
 
     }
 
-    public Task Status(MessageTypeEnum messageTypeEnum, List<OnlineUser> users)
+    public async Task Status(MessageTypeEnum messageTypeEnum, List<OnlineUser> users)
     {
         _state.OnlineUsers = users;
         _state.Names = users.Select(user => user.Name).ToList();
 
-        return Task.CompletedTask;
+        if (PresenceChanged != null)
+        {
+            await PresenceChanged.Invoke();
+        }
     }
 
     public Task VoiceCallReceived(string callerConnectionId, string callerName)
