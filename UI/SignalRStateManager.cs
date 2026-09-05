@@ -14,6 +14,8 @@ namespace UI;
 
 public sealed class SignalRStateManager : AuthenticationStateProvider, IDisposable, ITypedClient
 {
+    private const string VoiceModulePath = "./js/voice-chat.js?v=20260905-1";
+
     public event Func<string, string, Task>? VoiceOfferReceived;
     public event Func<string, string, Task>? VoiceAnswerReceived;
     public event Func<string, string, Task>? VoiceIceCandidateReceived;
@@ -175,7 +177,7 @@ public sealed class SignalRStateManager : AuthenticationStateProvider, IDisposab
 
         try
         {
-            _voiceModule ??= await _jsRuntime.InvokeAsync<IJSObjectReference>("import", "./js/voice-chat.js");
+            _voiceModule ??= await _jsRuntime.InvokeAsync<IJSObjectReference>("import", VoiceModulePath);
             var notificationsEnabled = await _voiceModule.InvokeAsync<bool>(
                 "registerBackgroundCalls",
                 login.Channel,
@@ -204,7 +206,7 @@ public sealed class SignalRStateManager : AuthenticationStateProvider, IDisposab
     {
         try
         {
-            _voiceModule ??= await _jsRuntime.InvokeAsync<IJSObjectReference>("import", "./js/voice-chat.js");
+            _voiceModule ??= await _jsRuntime.InvokeAsync<IJSObjectReference>("import", VoiceModulePath);
             await _voiceModule.InvokeVoidAsync("unregisterBackgroundCalls");
         }
         catch (Exception exception)
@@ -400,7 +402,7 @@ public sealed class SignalRStateManager : AuthenticationStateProvider, IDisposab
     {
         try
         {
-            _voiceModule ??= await _jsRuntime.InvokeAsync<IJSObjectReference>("import", "./js/voice-chat.js");
+            _voiceModule ??= await _jsRuntime.InvokeAsync<IJSObjectReference>("import", VoiceModulePath);
             return await _voiceModule.InvokeAsync<NativeBackgroundSession?>("restoreBackgroundSession");
         }
         catch (Exception exception)

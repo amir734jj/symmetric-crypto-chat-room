@@ -83,7 +83,16 @@ public class Startup
             .UseStaticFiles(new StaticFileOptions
             {
                 // Needed to serve dll files of Blazor webassembly
-                ServeUnknownFileTypes = true
+                ServeUnknownFileTypes = true,
+                OnPrepareResponse = context =>
+                {
+                    if (context.File.Name.Equals("voice-chat.js", StringComparison.OrdinalIgnoreCase))
+                    {
+                        context.Context.Response.Headers["Cache-Control"] = "no-cache, no-store, must-revalidate";
+                        context.Context.Response.Headers["Pragma"] = "no-cache";
+                        context.Context.Response.Headers["Expires"] = "0";
+                    }
+                }
             }).UseSpa(opt =>
             {
                 opt.ApplicationBuilder
