@@ -60,7 +60,7 @@
             {
                 <div class="voice-online-user">
                     <span>@user.Name</span>
-                    <HxButton Size="ButtonSize.Small" Color="ThemeColor.Primary" Enabled="@(!_busy)" OnClick="@(() => Ring(user))">
+                    <HxButton Size="ButtonSize.Small" Color="ThemeColor.Primary" Enabled="@(!_busy && _outgoingCallConnectionId == null)" OnClick="@(() => Ring(user))">
                         Ring
                     </HxButton>
                 </div>
@@ -85,7 +85,15 @@
 
     @if (!string.IsNullOrWhiteSpace(_callStatus))
     {
-        <div class="text-muted mt-2" role="status">@_callStatus</div>
+        <div class="voice-call-status mt-2" role="status">
+            <span class="text-muted">@_callStatus</span>
+            @if (_outgoingCallConnectionId != null)
+            {
+                <HxButton Size="ButtonSize.Small" Color="ThemeColor.Secondary" Enabled="@(!_busy)" OnClick="StopRinging">
+                    Stop ringing
+                </HxButton>
+            }
+        </div>
     }
 
     @if (!string.IsNullOrWhiteSpace(_error))
@@ -140,6 +148,8 @@
     private string? _debugInfo;
     private string? _incomingCallerConnectionId;
     private string? _incomingCallerName;
+    private string? _outgoingCallConnectionId;
+    private string? _outgoingCallName;
     private string? _callStatus;
     private string _audioQuality = "auto";
     private string _effectiveAudioQuality = "standard";
@@ -175,6 +185,7 @@
         SignalRStateManager.VoiceIceCandidateReceived += ReceiveVoiceIceCandidate;
         SignalRStateManager.VoiceParticipantLeftReceived += VoiceParticipantLeft;
         SignalRStateManager.VoiceCallReceivedEvent += VoiceCallReceived;
+        SignalRStateManager.VoiceCallCancelledEvent += VoiceCallCancelled;
         SignalRStateManager.VoiceCallRespondedEvent += VoiceCallResponded;
         SignalRStateManager.ConnectionReconnected += ConnectionReconnected;
     }
@@ -261,12 +272,26 @@
         try
         {
             await SignalRStateManager.RingVoice(user.ConnectionId);
+            _outgoingCallConnectionId = user.ConnectionId;
+            _outgoingCallName = user.Name;
             _callStatus = $"Ringing {user.Name}...";
         }
         catch (Exception exception)
         {
             _error = $"Unable to ring {user.Name}: {exception.Message}";
         }
+    }
+
+    private async Task StopRinging()
+    {
+        var targetConnectionId = _outgoingCallConnectionId;
+        var targetName = _outgoingCallName;
+        if (targetConnectionId == null) return;
+
+        await SignalRStateManager.CancelVoiceCall(targetConnectionId);
+        _outgoingCallConnectionId = null;
+        _outgoingCallName = null;
+        _callStatus = targetName == null ? "Call cancelled" : $"Stopped ringing {targetName}";
     }
 
     private Task VoiceCallReceived(string callerConnectionId, string callerName)
@@ -282,10 +307,27 @@
         });
     }
 
-    private Task VoiceCallResponded(string responderName, bool accepted)
+    private Task VoiceCallCancelled(string callerConnectionId)
+    {
+        return InvokeAsync(async () =>
+        {
+            if (_incomingCallerConnectionId != callerConnectionId) return;
+
+            var callerName = _incomingCallerName;
+            await ClearIncomingCall();
+            _callStatus = callerName == null ? "Incoming call cancelled" : $"{callerName} stopped ringing";
+            StateHasChanged();
+        });
+    }
+
+    private Task VoiceCallResponded(string responderConnectionId, string responderName, bool accepted)
     {
         return InvokeAsync(() =>
         {
+            if (_outgoingCallConnectionId != responderConnectionId) return;
+
+            _outgoingCallConnectionId = null;
+            _outgoingCallName = null;
             _callStatus = accepted
                 ? $"{responderName} accepted the call"
                 : $"{responderName} declined the call";
@@ -304,8 +346,16 @@
             await Join();
         }
 
-        await SignalRStateManager.RespondVoiceCall(callerConnectionId, _joined);
-        _callStatus = _joined ? "Call accepted" : "Unable to join the call";
+        try
+        {
+            await SignalRStateManager.RespondVoiceCall(callerConnectionId, _joined);
+            _callStatus = _joined ? "Call accepted" : "Unable to join the call";
+        }
+        catch (Exception exception)
+        {
+            _callStatus = "Call is no longer pending";
+            _error = exception.Message;
+        }
     }
 
     private async Task DeclineCall()
@@ -472,6 +522,7 @@
         SignalRStateManager.VoiceIceCandidateReceived -= ReceiveVoiceIceCandidate;
         SignalRStateManager.VoiceParticipantLeftReceived -= VoiceParticipantLeft;
         SignalRStateManager.VoiceCallReceivedEvent -= VoiceCallReceived;
+        SignalRStateManager.VoiceCallCancelledEvent -= VoiceCallCancelled;
         SignalRStateManager.VoiceCallRespondedEvent -= VoiceCallResponded;
         SignalRStateManager.ConnectionReconnected -= ConnectionReconnected;
 

@@ -22,6 +22,8 @@ namespace DomainLogic
 
         private static readonly ConcurrentDictionary<string, byte> VoiceUsers = new();
 
+        private static readonly ConcurrentDictionary<string, string> PendingVoiceCalls = new();
+
         public MessageHub(PlaybackLogic playbackLogic, TurnHealthChecker turnHealthChecker)
         {
             _playbackLogic = playbackLogic;
@@ -90,6 +92,20 @@ namespace DomainLogic
                 return;
             }
 
+            if (PendingVoiceCalls.TryRemove(Context.ConnectionId, out var callerConnectionId))
+            {
+                await Clients.Client(callerConnectionId)
+                    .VoiceCallResponded(Context.ConnectionId, userInfo.Name, false);
+            }
+
+            foreach (var pendingCall in PendingVoiceCalls.Where(call => call.Value == Context.ConnectionId))
+            {
+                if (TryRemovePendingCall(pendingCall.Key, Context.ConnectionId))
+                {
+                    await Clients.Client(pendingCall.Key).VoiceCallCancelled(Context.ConnectionId);
+                }
+            }
+
             if (VoiceUsers.TryRemove(Context.ConnectionId, out _))
             {
                 await Clients.Group(userInfo.Channel).VoiceParticipantLeft(Context.ConnectionId);
@@ -149,7 +165,7 @@ namespace DomainLogic
             return _turnHealthChecker.CheckAsync();
         }
 
-        public Task RingVoice(string targetConnectionId)
+        public async Task RingVoice(string targetConnectionId)
         {
             var caller = GetCurrentUser();
             var target = GetUserInSameChannel(targetConnectionId, caller.Channel);
@@ -159,14 +175,43 @@ namespace DomainLogic
                 throw new HubException("Cannot ring the current user");
             }
 
-            return Clients.Client(targetConnectionId).VoiceCallReceived(Context.ConnectionId, caller.Name);
+            if (!PendingVoiceCalls.TryAdd(targetConnectionId, Context.ConnectionId))
+            {
+                throw new HubException("User already has an incoming call");
+            }
+
+            try
+            {
+                await Clients.Client(targetConnectionId).VoiceCallReceived(Context.ConnectionId, caller.Name);
+            }
+            catch
+            {
+                TryRemovePendingCall(targetConnectionId, Context.ConnectionId);
+                throw;
+            }
+        }
+
+        public Task CancelVoiceCall(string targetConnectionId)
+        {
+            var caller = GetCurrentUser();
+            GetUserInSameChannel(targetConnectionId, caller.Channel);
+
+            return TryRemovePendingCall(targetConnectionId, Context.ConnectionId)
+                ? Clients.Client(targetConnectionId).VoiceCallCancelled(Context.ConnectionId)
+                : Task.CompletedTask;
         }
 
         public Task RespondVoiceCall(string callerConnectionId, bool accepted)
         {
             var responder = GetCurrentUser();
             GetUserInSameChannel(callerConnectionId, responder.Channel);
-            return Clients.Client(callerConnectionId).VoiceCallResponded(responder.Name, accepted);
+            if (!TryRemovePendingCall(Context.ConnectionId, callerConnectionId))
+            {
+                throw new HubException("Voice call is no longer pending");
+            }
+
+            return Clients.Client(callerConnectionId)
+                .VoiceCallResponded(Context.ConnectionId, responder.Name, accepted);
         }
 
         public async Task LeaveVoice()
@@ -226,6 +271,12 @@ namespace DomainLogic
             }
 
             return user;
+        }
+
+        private static bool TryRemovePendingCall(string targetConnectionId, string callerConnectionId)
+        {
+            return ((ICollection<KeyValuePair<string, string>>)PendingVoiceCalls)
+                .Remove(new KeyValuePair<string, string>(targetConnectionId, callerConnectionId));
         }
 
         private async Task NotifyAll(string channel, MessageTypeEnum type)

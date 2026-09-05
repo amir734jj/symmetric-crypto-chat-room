@@ -11,7 +11,9 @@ namespace Models.Hub
 
         public Task VoiceCallReceived(string callerConnectionId, string callerName);
 
-        public Task VoiceCallResponded(string responderName, bool accepted);
+        public Task VoiceCallCancelled(string callerConnectionId);
+
+        public Task VoiceCallResponded(string responderConnectionId, string responderName, bool accepted);
 
         public Task VoiceParticipantLeft(string connectionId);
 

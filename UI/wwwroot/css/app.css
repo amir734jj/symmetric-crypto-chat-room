@@ -105,6 +105,12 @@ pre {
     gap: 0.5rem;
 }
 
+.voice-call-status {
+    align-items: center;
+    display: flex;
+    gap: 0.75rem;
+}
+
 .voice-debug {
     min-width: 0;
 }

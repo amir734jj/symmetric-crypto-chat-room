@@ -19,7 +19,8 @@ public sealed class SignalRStateManager : AuthenticationStateProvider, IDisposab
     public event Func<string, string, Task>? VoiceIceCandidateReceived;
     public event Func<string, Task>? VoiceParticipantLeftReceived;
     public event Func<string, string, Task>? VoiceCallReceivedEvent;
-    public event Func<string, bool, Task>? VoiceCallRespondedEvent;
+    public event Func<string, Task>? VoiceCallCancelledEvent;
+    public event Func<string, string, bool, Task>? VoiceCallRespondedEvent;
     public event Func<Task>? ConnectionReconnected;
 
     public string? ConnectionId => _hubConnection.ConnectionId;
@@ -200,6 +201,11 @@ public sealed class SignalRStateManager : AuthenticationStateProvider, IDisposab
         return _server.RingVoice(targetConnectionId);
     }
 
+    public Task CancelVoiceCall(string targetConnectionId)
+    {
+        return _server.CancelVoiceCall(targetConnectionId);
+    }
+
     public Task RespondVoiceCall(string callerConnectionId, bool accepted)
     {
         return _server.RespondVoiceCall(callerConnectionId, accepted);
@@ -282,9 +288,14 @@ public sealed class SignalRStateManager : AuthenticationStateProvider, IDisposab
         return VoiceCallReceivedEvent?.Invoke(callerConnectionId, callerName) ?? Task.CompletedTask;
     }
 
-    public Task VoiceCallResponded(string responderName, bool accepted)
+    public Task VoiceCallCancelled(string callerConnectionId)
     {
-        return VoiceCallRespondedEvent?.Invoke(responderName, accepted) ?? Task.CompletedTask;
+        return VoiceCallCancelledEvent?.Invoke(callerConnectionId) ?? Task.CompletedTask;
+    }
+
+    public Task VoiceCallResponded(string responderConnectionId, string responderName, bool accepted)
+    {
+        return VoiceCallRespondedEvent?.Invoke(responderConnectionId, responderName, accepted) ?? Task.CompletedTask;
     }
 
     public Task VoiceParticipantLeft(string connectionId)

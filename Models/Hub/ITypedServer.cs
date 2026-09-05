@@ -21,6 +21,8 @@ namespace Models.Hub
 
         Task RingVoice(string targetConnectionId);
 
+        Task CancelVoiceCall(string targetConnectionId);
+
         Task RespondVoiceCall(string callerConnectionId, bool accepted);
 
         Task LeaveVoice();
