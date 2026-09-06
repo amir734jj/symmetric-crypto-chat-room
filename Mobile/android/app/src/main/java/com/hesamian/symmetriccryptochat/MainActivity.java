@@ -38,19 +38,19 @@ public class MainActivity extends BridgeActivity {
 	}
 
 	@Override
-	protected void onResume() {
+	public void onResume() {
 		super.onResume();
 		NativeDebugLog.record(this, "MainActivity", "onResume");
 	}
 
 	@Override
-	protected void onPause() {
+	public void onPause() {
 		NativeDebugLog.record(this, "MainActivity", "onPause");
 		super.onPause();
 	}
 
 	@Override
-	protected void onDestroy() {
+	public void onDestroy() {
 		NativeDebugLog.record(this, "MainActivity", "onDestroy");
 		super.onDestroy();
 	}
