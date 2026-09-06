@@ -58,6 +58,20 @@ public class VoiceAudioRouterPlugin extends Plugin implements SensorEventListene
     }
 
     @PluginMethod
+    public void getDebugLog(PluginCall call) {
+        JSObject result = new JSObject();
+        result.put("report", NativeDebugLog.getReport(getContext()));
+        call.resolve(result);
+    }
+
+    @PluginMethod
+    public void clearDebugLog(PluginCall call) {
+        NativeDebugLog.clear(getContext());
+        NativeDebugLog.record(getContext(), "Diagnostics", "Native log cleared");
+        call.resolve();
+    }
+
+    @PluginMethod
     public void setMode(PluginCall call) {
         String selectedMode = call.getString("mode", "auto");
         if (!selectedMode.equals("auto") && !selectedMode.equals("earpiece") && !selectedMode.equals("speaker")) {
@@ -97,10 +111,12 @@ public class VoiceAudioRouterPlugin extends Plugin implements SensorEventListene
 
     @PluginMethod
     public void startCall(PluginCall call) {
+        NativeDebugLog.record(getContext(), "VoiceAudioRouter", "startCall requested");
         try {
             VoiceCallService.setCallActive(getContext(), true);
         } catch (Exception exception) {
             Log.w(TAG, "Unable to keep the voice call active in the background", exception);
+            NativeDebugLog.record(getContext(), "VoiceAudioRouter", "startCall failed", exception);
         }
         call.resolve();
     }

@@ -65,17 +65,21 @@ public class VoiceCallService extends Service {
     public void onCreate() {
         super.onCreate();
         serviceRunning = true;
+        NativeDebugLog.record(this, TAG, "onCreate");
         try {
             createNotificationChannels();
             acquireWakeLock();
         } catch (RuntimeException exception) {
             Log.e(TAG, "Unable to initialize background call handling", exception);
+            NativeDebugLog.record(this, TAG, "Initialization failed", exception);
         }
     }
 
     @Override
     public int onStartCommand(Intent intent, int flags, int startId) {
         try {
+            NativeDebugLog.record(this, TAG, "onStartCommand action=" +
+                (intent == null ? "null" : intent.getAction()));
             session = BackgroundCallSession.load(this);
             if (session == null) {
                 stopSelf();
@@ -83,7 +87,9 @@ public class VoiceCallService extends Service {
             }
 
             if (intent != null && ACTION_SET_CALL_ACTIVE.equals(intent.getAction())) {
-                setActiveCallState(intent.getBooleanExtra(EXTRA_CALL_ACTIVE, false));
+                boolean active = intent.getBooleanExtra(EXTRA_CALL_ACTIVE, false);
+                NativeDebugLog.record(this, TAG, "Call active=" + active);
+                setActiveCallState(active);
             } else {
                 updateForegroundNotification();
             }
@@ -91,6 +97,7 @@ public class VoiceCallService extends Service {
             return START_STICKY;
         } catch (RuntimeException exception) {
             Log.e(TAG, "Unable to start background call handling", exception);
+            NativeDebugLog.record(this, TAG, "onStartCommand failed", exception);
             stopSelf();
             return START_NOT_STICKY;
         }
@@ -104,6 +111,7 @@ public class VoiceCallService extends Service {
 
     @Override
     public void onDestroy() {
+        NativeDebugLog.record(this, TAG, "onDestroy");
         serviceRunning = false;
         stopping = true;
         reconnectHandler.removeCallbacksAndMessages(null);
@@ -187,6 +195,7 @@ public class VoiceCallService extends Service {
             }
         } catch (RuntimeException exception) {
             Log.e(TAG, "Unable to show incoming call notification", exception);
+            NativeDebugLog.record(this, TAG, "Incoming call notification failed", exception);
         }
     }
 
@@ -198,6 +207,7 @@ public class VoiceCallService extends Service {
             }
         } catch (RuntimeException exception) {
             Log.w(TAG, "Unable to dismiss incoming call notification", exception);
+            NativeDebugLog.record(this, TAG, "Incoming call notification dismissal failed", exception);
         }
     }
 
@@ -218,6 +228,7 @@ public class VoiceCallService extends Service {
             }
         } catch (RuntimeException exception) {
             Log.e(TAG, "Unable to keep the background call listener active", exception);
+            NativeDebugLog.record(this, TAG, "Foreground listener promotion failed", exception);
             stopSelf();
         }
     }
@@ -250,6 +261,7 @@ public class VoiceCallService extends Service {
             }
         } catch (RuntimeException exception) {
             Log.w(TAG, "Unable to release background call wake lock", exception);
+            NativeDebugLog.record(this, TAG, "Wake lock release failed", exception);
         } finally {
             wakeLock = null;
         }
@@ -285,10 +297,12 @@ public class VoiceCallService extends Service {
                 () -> registerBackground(activeConnection, activeSession),
                 error -> {
                     Log.w(TAG, "Unable to connect background call endpoint", error);
+                    NativeDebugLog.record(this, TAG, "SignalR connection failed", error);
                     scheduleReconnect();
                 });
         } catch (RuntimeException exception) {
             Log.e(TAG, "Unable to create background SignalR connection", exception);
+            NativeDebugLog.record(this, TAG, "SignalR connection creation failed", exception);
             scheduleReconnect();
         }
     }
@@ -308,10 +322,12 @@ public class VoiceCallService extends Service {
                     () -> reconnectAttempts = 0,
                     error -> {
                         Log.w(TAG, "Unable to register background call endpoint", error);
+                        NativeDebugLog.record(this, TAG, "SignalR registration failed", error);
                         stopConnection(activeConnection);
                     });
         } catch (RuntimeException exception) {
             Log.e(TAG, "Unable to register background call endpoint", exception);
+            NativeDebugLog.record(this, TAG, "SignalR registration failed", exception);
             stopConnection(activeConnection);
         }
     }

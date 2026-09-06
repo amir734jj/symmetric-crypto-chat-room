@@ -24,7 +24,9 @@ const audioQualityProfiles = {
 };
 
 export async function initialize(reference, container, turnCredentials, passwordDerivedKey, selectedAudioQuality) {
+    window.appDiagnostics?.record("Voice", "initialize started");
     if (!("RTCRtpScriptTransform" in window)) {
+        window.appDiagnostics?.record("Voice", "encrypted WebRTC unsupported");
         throw new Error("This browser does not support password-encrypted WebRTC audio");
     }
 
@@ -53,10 +55,17 @@ export async function initialize(reference, container, turnCredentials, password
     };
 
     const nativeAudioRouter = getNativeAudioRouter();
-    localStream = await navigator.mediaDevices.getUserMedia({
-        audio: nativeAudioRouter ? true : getAudioConstraints(),
-        video: false
-    });
+    window.appDiagnostics?.record("Voice", "requesting microphone permission");
+    try {
+        localStream = await navigator.mediaDevices.getUserMedia({
+            audio: nativeAudioRouter ? true : getAudioConstraints(),
+            video: false
+        });
+    } catch (error) {
+        window.appDiagnostics?.record("Voice", "microphone request failed", error?.message || error);
+        throw error;
+    }
+    window.appDiagnostics?.record("Voice", "microphone stream acquired");
     if (!nativeAudioRouter && "audioSession" in navigator) {
         try {
             await setAudioOutputMode("auto");
@@ -69,6 +78,7 @@ export async function initialize(reference, container, turnCredentials, password
     await requestScreenWakeLock();
     startQualityAdaptation();
     notifyAudioQualityChanged();
+    window.appDiagnostics?.record("Voice", "initialize completed");
 }
 
 export async function connectToParticipants(connectionIds) {
