@@ -3,7 +3,7 @@ const clearHeaderLengths = {
     delta: 3,
     audio: 1
 };
-const counterTrailerLength = 8;
+const frameMetadataLength = 9;
 
 self.onrtctransform = event => {
     const { operation, key, senderId, mediaKind, contextId } = event.transformer.options;
@@ -20,7 +20,7 @@ self.onrtctransform = event => {
                     : clearHeaderLengths.audio;
                 const output = operation === "encrypt"
                     ? await encryptFrame(input, clearHeaderLength, counterPrefix, cryptoKey, frameCounter++)
-                    : await decryptFrame(input, clearHeaderLength, counterPrefix, cryptoKey);
+                    : await decryptFrame(input, counterPrefix, cryptoKey);
                 if (!output) return;
 
                 frame.data = output.buffer;
@@ -40,21 +40,24 @@ async function encryptFrame(input, clearHeaderLength, counterPrefix, cryptoKey, 
         counterPrefix,
         cryptoKey,
         frameCounter);
-    const output = new Uint8Array(input.byteLength + counterTrailerLength);
+    const output = new Uint8Array(input.byteLength + frameMetadataLength);
     output.set(input.slice(0, clearHeaderLength));
     output.set(transformed, clearHeaderLength);
-    new DataView(output.buffer).setBigUint64(input.byteLength, frameCounter);
+    output[input.byteLength] = clearHeaderLength;
+    new DataView(output.buffer).setBigUint64(input.byteLength + 1, frameCounter);
     return output;
 }
 
-async function decryptFrame(input, clearHeaderLength, counterPrefix, cryptoKey) {
-    if (input.byteLength < clearHeaderLength + counterTrailerLength) return null;
+async function decryptFrame(input, counterPrefix, cryptoKey) {
+    if (input.byteLength < frameMetadataLength) return null;
 
-    const encryptedLength = input.byteLength - counterTrailerLength;
+    const encryptedLength = input.byteLength - frameMetadataLength;
+    const clearHeaderLength = input[encryptedLength];
+    if (clearHeaderLength > encryptedLength) return null;
     const frameCounter = new DataView(
         input.buffer,
-        input.byteOffset + encryptedLength,
-        counterTrailerLength).getBigUint64(0);
+        input.byteOffset + encryptedLength + 1,
+        8).getBigUint64(0);
     const transformed = await transformPayload(
         input.slice(clearHeaderLength, encryptedLength),
         counterPrefix,

@@ -39,7 +39,7 @@
             @if (!_joined)
             {
                 <HxButton Color="ThemeColor.Success" Enabled="@(!_busy)" OnClick="Join">
-                    Join call
+                    Join bridge
                 </HxButton>
             }
             else
@@ -88,15 +88,6 @@
             }
         </div>
     </div>
-
-    @if (_joined)
-    {
-        <div class="voice-live-status mt-2" aria-live="off">
-            <span>Call @FormatCallDuration(_callDuration)</span>
-            <span>Up @_sendMbps.ToString("0.000") Mbps</span>
-            <span>Down @_receiveMbps.ToString("0.000") Mbps</span>
-        </div>
-    }
 
     <div class="voice-presence mt-3">
         <strong>Online</strong>
@@ -178,6 +169,11 @@
                         Hide
                     </HxButton>
                 </div>
+            </div>
+            <div class="voice-live-status mt-2" aria-live="off">
+                <span>Call @FormatCallDuration(_callDuration)</span>
+                <span>Up @_sendMbps.ToString("0.000") Mbps</span>
+                <span>Down @_receiveMbps.ToString("0.000") Mbps</span>
             </div>
             <pre class="mt-2 mb-0">@_debugInfo</pre>
         </div>
@@ -661,6 +657,8 @@
     {
         _debugRequestVersion++;
         _showDebug = false;
+        _sendMbps = 0;
+        _receiveMbps = 0;
     }
 
     private async Task Leave()
@@ -679,7 +677,16 @@
                 .FirstOrDefault(user => user.ConnectionId == senderConnectionId)?.Name
                 ?? (_incomingCallerConnectionId == senderConnectionId ? _incomingCallerName : null)
                 ?? "Participant";
-            await _module.InvokeVoidAsync("receiveOffer", senderConnectionId, senderName, offer);
+            try
+            {
+                await _module.InvokeVoidAsync("receiveOffer", senderConnectionId, senderName, offer);
+                _error = null;
+            }
+            catch (Exception exception)
+            {
+                _participantIds.Remove(senderConnectionId);
+                _error = $"Unable to establish media bridge: {exception.Message}";
+            }
             StateHasChanged();
         });
     }
@@ -690,7 +697,18 @@
         {
             if (_module != null)
             {
-                await _module.InvokeVoidAsync("receiveAnswer", senderConnectionId, answer);
+                try
+                {
+                    await _module.InvokeVoidAsync("receiveAnswer", senderConnectionId, answer);
+                    _error = null;
+                }
+                catch (Exception exception)
+                {
+                    _participantIds.Remove(senderConnectionId);
+                    await _module.InvokeVoidAsync("removeParticipant", senderConnectionId);
+                    _error = $"Unable to establish media bridge: {exception.Message}";
+                    StateHasChanged();
+                }
             }
         });
     }
@@ -805,7 +823,7 @@
             while (await timer.WaitForNextTickAsync(cancellationToken))
             {
                 double[]? dataRates = null;
-                if (_joined && _module != null)
+                if (_joined && _showDebug && _module != null)
                 {
                     try
                     {

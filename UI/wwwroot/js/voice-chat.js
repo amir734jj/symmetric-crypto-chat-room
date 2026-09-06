@@ -5,6 +5,7 @@ let localStream;
 let peerConfiguration;
 let encryptionWorker;
 let voiceKey;
+let mediaKeyConfirmation;
 let localConnectionId;
 let audioQuality = "standard";
 let audioQualityMode = "auto";
@@ -50,6 +51,7 @@ export async function initialize(
     remoteMediaContainer = container;
     localVideoElement = localVideo;
     voiceKey = passwordDerivedKey;
+    mediaKeyConfirmation = await createMediaKeyConfirmation(passwordDerivedKey);
     localConnectionId = turnCredentials.username.split(":", 2)[1];
     audioQualityMode = normalizeAudioQualityMode(selectedAudioQuality);
     audioQuality = audioQualityMode === "auto" ? "standard" : audioQualityMode;
@@ -88,6 +90,39 @@ export async function initialize(
     notifyVideoQualityChanged();
 }
 
+async function createMediaKeyConfirmation(base64Key) {
+    const keyBytes = Uint8Array.from(atob(base64Key), character => character.charCodeAt(0));
+    const confirmationKey = await crypto.subtle.importKey(
+        "raw",
+        keyBytes,
+        { name: "HMAC", hash: "SHA-256" },
+        false,
+        ["sign"]);
+    const signature = await crypto.subtle.sign(
+        "HMAC",
+        confirmationKey,
+        new TextEncoder().encode("symmetric-crypto-chat-room/media-key/v1"));
+    return btoa(String.fromCharCode(...new Uint8Array(signature)));
+}
+
+function serializeSessionDescription(description) {
+    return JSON.stringify({ description, mediaKeyConfirmation });
+}
+
+function parseSessionDescription(messageJson) {
+    const message = JSON.parse(messageJson);
+    if (message.error === "mediaKeyMismatch") {
+        throw new Error("Cannot join the media bridge because the participants are using different passwords");
+    }
+    if (!message.mediaKeyConfirmation || message.mediaKeyConfirmation !== mediaKeyConfirmation) {
+        throw new Error("Cannot join the media bridge because the participants are using different passwords");
+    }
+    if (!message.description?.type || !message.description?.sdp) {
+        throw new Error("The media bridge received an invalid session description");
+    }
+    return message.description;
+}
+
 export async function connectToParticipants(participants) {
     for (const participant of participants) {
         const peer = await createPeer(participant.connectionId, participant.name);
@@ -96,8 +131,18 @@ export async function connectToParticipants(participants) {
 }
 
 export async function receiveOffer(senderConnectionId, senderName, offerJson) {
+    let offer;
+    try {
+        offer = parseSessionDescription(offerJson);
+    } catch (error) {
+        await dotNetReference.invokeMethodAsync(
+            "SendVoiceAnswer",
+            senderConnectionId,
+            JSON.stringify({ error: "mediaKeyMismatch" }));
+        throw error;
+    }
+
     const peer = await createPeer(senderConnectionId, senderName);
-    const offer = JSON.parse(offerJson);
     const offerCollision = peer.makingOffer || peer.connection.signalingState !== "stable";
     peer.ignoreOffer = !peer.polite && offerCollision;
     if (peer.ignoreOffer) return;
@@ -113,14 +158,14 @@ export async function receiveOffer(senderConnectionId, senderName, offerJson) {
     await dotNetReference.invokeMethodAsync(
         "SendVoiceAnswer",
         senderConnectionId,
-        JSON.stringify(peer.connection.localDescription));
+        serializeSessionDescription(peer.connection.localDescription));
 }
 
 export async function receiveAnswer(senderConnectionId, answerJson) {
     const peer = peers.get(senderConnectionId);
     if (!peer || peer.connection.signalingState !== "have-local-offer") return;
 
-    await peer.connection.setRemoteDescription(JSON.parse(answerJson));
+    await peer.connection.setRemoteDescription(parseSessionDescription(answerJson));
     await addPendingCandidates(peer);
 }
 
@@ -418,7 +463,7 @@ function calculateDataRateMbps(initialPair, currentPair) {
         initialPair.bytesReceived === undefined || currentPair.bytesReceived === undefined) return null;
 
     const elapsedSeconds = (currentPair.timestamp - initialPair.timestamp) / 1000;
-    if (elapsedSeconds <= 0) return null;
+    if (elapsedSeconds <= 0 || elapsedSeconds > 2.5) return null;
 
     const sendMbps = Math.max(0, currentPair.bytesSent - initialPair.bytesSent) * 8 / elapsedSeconds / 1000000;
     const receiveMbps = Math.max(0, currentPair.bytesReceived - initialPair.bytesReceived) * 8 / elapsedSeconds / 1000000;
@@ -495,6 +540,7 @@ export function leave() {
     remoteMediaContainer = undefined;
     dotNetReference = undefined;
     voiceKey = undefined;
+    mediaKeyConfirmation = undefined;
     localConnectionId = undefined;
     selectedAudioOutputId = "";
     audioOutputMode = "auto";
@@ -722,7 +768,7 @@ async function negotiatePeer(connectionId, peer) {
         await dotNetReference.invokeMethodAsync(
             "SendVoiceOffer",
             connectionId,
-            JSON.stringify(peer.connection.localDescription));
+            serializeSessionDescription(peer.connection.localDescription));
     } finally {
         peer.makingOffer = false;
     }
