@@ -1,18 +1,29 @@
 let transcriber;
 let transcriberPromise;
-let selectedModel;
 const models = {
-    default: {
+    tiny: {
         id: "onnx-community/whisper-tiny",
-        label: "Whisper Tiny"
+        label: "Multilingual Whisper Tiny"
     },
     base: {
         id: "onnx-community/whisper-base",
-        label: "Whisper Base"
+        label: "Multilingual Whisper Base"
     },
     small: {
         id: "onnx-community/whisper-small",
-        label: "Whisper Small"
+        label: "Multilingual Whisper Small"
+    },
+    "tiny-en": {
+        id: "onnx-community/whisper-tiny.en",
+        label: "English Whisper Tiny"
+    },
+    "base-en": {
+        id: "onnx-community/whisper-base.en",
+        label: "English Whisper Base"
+    },
+    "small-en": {
+        id: "onnx-community/whisper-small.en",
+        label: "English Whisper Small"
     }
 };
 
@@ -44,7 +55,7 @@ async function getTranscriber(modelKey) {
     if (transcriber) return transcriber;
     if (transcriberPromise) return transcriberPromise;
 
-    selectedModel = Object.hasOwn(models, modelKey) ? modelKey : "default";
+    const selectedModel = Object.hasOwn(models, modelKey) ? modelKey : "tiny";
     const model = models[selectedModel];
     self.postMessage({ type: "status", message: `Loading ${model.label} on device...` });
     transcriberPromise = (async () => {

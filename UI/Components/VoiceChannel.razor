@@ -46,7 +46,7 @@
             {
                 @if (_usesAudioSessionOutputModes)
                 {
-                    <label class="voice-quality">
+                    <label class="voice-quality voice-transcription-model">
                         <span>Audio output</span>
                         <select class="form-select form-select-sm" @bind="_audioOutputMode" @bind:after="AudioOutputModeChanged">
                             <option value="auto">Auto (proximity)</option>
@@ -87,9 +87,13 @@
                     <label class="voice-quality">
                         <span>Transcription model</span>
                         <select class="form-select form-select-sm" @bind="_transcriptionModel" disabled="@(_busy || _transcriptionEnabled)">
-                            <option value="default">Default (Whisper Tiny)</option>
-                            <option value="base">Whisper Base</option>
-                            <option value="small">Whisper Small</option>
+                            <option value="auto">Default (Auto) - Recommended: @TranscriptionModelLabel(_recommendedTranscriptionModel)</option>
+                            <option value="tiny">Multilingual Tiny - Fastest, least accurate</option>
+                            <option value="base">Multilingual Base - More accurate, slower</option>
+                            <option value="small">Multilingual Small - Most accurate, slowest</option>
+                            <option value="tiny-en">English Tiny - Fastest for English</option>
+                            <option value="base-en">English Base - More accurate English, slower</option>
+                            <option value="small-en">English Small - Most accurate English, slowest</option>
                         </select>
                     </label>
                     <HxButton Color="ThemeColor.Secondary" Enabled="@(!_busy)" OnClick="ToggleTranscription">
@@ -238,7 +242,7 @@
 </section>
 
 @code {
-    private const string VoiceModulePath = "./js/voice-chat.js?v=20260906-4";
+    private const string VoiceModulePath = "./js/voice-chat.js?v=20260906-5";
 
     private static readonly TimeSpan RingTimeout = TimeSpan.FromSeconds(30);
     private readonly HashSet<string> _participantIds = [];
@@ -281,7 +285,8 @@
     private string _videoQuality = "auto";
     private string _effectiveVideoQuality = "standard";
     private string _audioOutputMode = "auto";
-    private string _transcriptionModel = "default";
+    private string _transcriptionModel = "auto";
+    private string _recommendedTranscriptionModel = "tiny";
     private TurnHealthStatus? _turnHealth;
 
     private IEnumerable<OnlineUser> OtherOnlineUsers => State.OnlineUsers
@@ -365,6 +370,10 @@
             try
             {
                 _liveTranscriptionSupported = await _module.InvokeAsync<bool>("supportsLiveTranscription");
+                if (_liveTranscriptionSupported)
+                {
+                    _recommendedTranscriptionModel = await _module.InvokeAsync<string>("getRecommendedTranscriptionModel");
+                }
             }
             catch (JSException exception) when (exception.Message.Contains("supportsLiveTranscription"))
             {
@@ -980,6 +989,16 @@
             "low" => "Low (240p)",
             "high" => "High (720p)",
             _ => "Medium (480p)"
+        };
+    }
+
+    private static string TranscriptionModelLabel(string model)
+    {
+        return model switch
+        {
+            "small" => "Whisper Small",
+            "base" => "Whisper Base",
+            _ => "Whisper Tiny"
         };
     }
 

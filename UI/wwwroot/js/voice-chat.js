@@ -43,7 +43,14 @@ const liveDataRateSamples = new Map();
 const transcriptionSources = new Map();
 const transcriptionSampleRate = 16000;
 const transcriptionWindowSamples = transcriptionSampleRate * 6;
-const transcriptionModels = new Set(["default", "base", "small"]);
+const transcriptionModels = new Set([
+    "tiny",
+    "base",
+    "small",
+    "tiny-en",
+    "base-en",
+    "small-en"
+]);
 const audioQualityProfiles = {
     low: { sampleRate: 16000, maxBitrate: 16000 },
     standard: { sampleRate: 32000, maxBitrate: 32000 },
@@ -479,7 +486,21 @@ export function supportsLiveTranscription() {
     return Boolean(window.AudioContext || window.webkitAudioContext) && "Worker" in window;
 }
 
-export async function setTranscriptionEnabled(enabled, selectedModel = "default") {
+export function getRecommendedTranscriptionModel() {
+    const memory = Number(navigator.deviceMemory) || 0;
+    const processorCount = Number(navigator.hardwareConcurrency) || 0;
+    const mobile = navigator.userAgentData?.mobile === true ||
+        window.matchMedia?.("(pointer: coarse)").matches === true;
+
+    if (mobile || (memory > 0 && memory <= 4) || (processorCount > 0 && processorCount <= 4)) {
+        return "tiny";
+    }
+    if (memory >= 8 && processorCount >= 12) return "small";
+    if (memory >= 8 && processorCount >= 6) return "base";
+    return "tiny";
+}
+
+export async function setTranscriptionEnabled(enabled, selectedModel = "auto") {
     if (enabled) {
         if (transcriptionEnabled) return true;
         if (!localStream?.getAudioTracks().some(track => track.readyState === "live")) {
@@ -491,7 +512,7 @@ export async function setTranscriptionEnabled(enabled, selectedModel = "default"
 
         transcriptionEnabled = true;
         transcriptionWorker = new Worker(
-            new URL("./transcription-worker.js?version=whisper-model-selector-v1", import.meta.url),
+            new URL("./transcription-worker.js?version=whisper-model-selector-v2", import.meta.url),
             { type: "module" });
         transcriptionWorker.onmessage = handleTranscriptionWorkerMessage;
         transcriptionWorker.onerror = event => {
@@ -1510,5 +1531,6 @@ function notifyVideoQualityChanged() {
 }
 
 function normalizeTranscriptionModel(model) {
-    return transcriptionModels.has(model) ? model : "default";
+    if (model === "auto") return getRecommendedTranscriptionModel();
+    return transcriptionModels.has(model) ? model : getRecommendedTranscriptionModel();
 }
