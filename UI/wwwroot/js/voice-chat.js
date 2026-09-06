@@ -2,6 +2,10 @@ let dotNetReference;
 let remoteMediaContainer;
 let localVideoElement;
 let localStream;
+let cameraTrack;
+let screenTrack;
+let restoreCameraAfterScreenShare = false;
+let screenShareStarting = false;
 let peerConfiguration;
 let encryptionWorker;
 let voiceKey;
@@ -22,8 +26,19 @@ let selectedAudioOutputId = "";
 let audioOutputMode = "auto";
 let proximitySensor;
 let proximitySensorNear;
+let transcriptionWorker;
+let transcriptionContext;
+let transcriptionProcessor;
+let transcriptionSink;
+let transcriptionEnabled = false;
+let transcriptionBusy = false;
+let transcriptionSamples = [];
+let transcriptionSampleCount = 0;
 const peers = new Map();
 const liveDataRateSamples = new Map();
+const transcriptionSources = new Map();
+const transcriptionSampleRate = 16000;
+const transcriptionWindowSamples = transcriptionSampleRate * 6;
 const audioQualityProfiles = {
     low: { sampleRate: 16000, maxBitrate: 16000 },
     standard: { sampleRate: 32000, maxBitrate: 32000 },
@@ -57,7 +72,9 @@ export async function initialize(
     audioQuality = audioQualityMode === "auto" ? "standard" : audioQualityMode;
     videoQualityMode = normalizeVideoQualityMode(selectedVideoQuality);
     videoQuality = videoQualityMode === "auto" ? "standard" : videoQualityMode;
-    encryptionWorker = new Worker(new URL("./voice-crypto-worker.js", import.meta.url), { type: "module" });
+    encryptionWorker = new Worker(
+        new URL("./voice-crypto-worker.js?version=vp8-frame-header", import.meta.url),
+        { type: "module" });
 
     const host = turnCredentials.host || window.location.hostname;
     peerConfiguration = {
@@ -189,8 +206,14 @@ export function setMuted(muted) {
 }
 
 export async function setVideoEnabled(enabled) {
-    const currentTrack = localStream?.getVideoTracks()
-        .find(track => track.readyState === "live");
+    if (!localStream || !localVideoElement) {
+        throw new Error("Join the media bridge before changing the camera");
+    }
+    if (screenShareStarting || screenTrack?.readyState === "live") {
+        throw new Error("Stop screen sharing before changing the camera");
+    }
+
+    const currentTrack = cameraTrack?.readyState === "live" ? cameraTrack : null;
     if (enabled && currentTrack) return true;
 
     if (enabled) {
@@ -204,6 +227,7 @@ export async function setVideoEnabled(enabled) {
         const videoTrack = cameraStream.getVideoTracks()[0];
         if (!videoTrack) throw new Error("No camera is available");
 
+        cameraTrack = videoTrack;
         videoTrack.addEventListener("ended", handleLocalVideoEnded, { once: true });
         await showLocalVideo(videoTrack);
         localStream.addTrack(videoTrack);
@@ -218,6 +242,7 @@ export async function setVideoEnabled(enabled) {
 
     if (!currentTrack) return false;
     localStream.removeTrack(currentTrack);
+    cameraTrack = undefined;
     currentTrack.stop();
     localVideoElement.srcObject = null;
     localVideoElement.hidden = true;
@@ -228,6 +253,110 @@ export async function setVideoEnabled(enabled) {
         await negotiatePeer(connectionId, peer);
     }
     return false;
+}
+
+export async function setScreenSharing(enabled) {
+    if (!localStream || !localVideoElement) {
+        throw new Error("Join the media bridge before sharing a screen");
+    }
+
+    if (enabled) {
+        if (screenTrack?.readyState === "live") return true;
+        if (screenShareStarting) throw new Error("Screen sharing is already starting");
+        if (!navigator.mediaDevices.getDisplayMedia) {
+            throw new Error("Screen sharing is not supported by this browser");
+        }
+
+        screenShareStarting = true;
+        try {
+            const displayStream = await navigator.mediaDevices.getDisplayMedia({
+                audio: false,
+                video: { frameRate: { ideal: 15, max: 30 } }
+            });
+            const displayTrack = displayStream.getVideoTracks()[0];
+            if (!displayTrack) throw new Error("No screen was selected");
+            if (!localStream || !localVideoElement) {
+                displayTrack.stop();
+                throw new Error("The media bridge was left before screen sharing started");
+            }
+
+            await showLocalVideo(displayTrack);
+            restoreCameraAfterScreenShare = cameraTrack?.readyState === "live";
+            if (restoreCameraAfterScreenShare) localStream.removeTrack(cameraTrack);
+            screenTrack = displayTrack;
+            localStream.addTrack(displayTrack);
+            displayTrack.addEventListener("ended", handleScreenShareEnded, { once: true });
+
+            for (const [connectionId, peer] of peers) {
+                try {
+                    const sender = peer.connection.getSenders().find(candidate => candidate.track?.kind === "video");
+                    if (sender) {
+                        await sender.replaceTrack(displayTrack);
+                        await applySenderVideoQuality(sender);
+                    } else {
+                        const newSender = addLocalTrack(peer, displayTrack, connectionId);
+                        await applySenderVideoQuality(newSender);
+                        await negotiatePeer(connectionId, peer);
+                    }
+                } catch (error) {
+                    console.warn(`Unable to share the screen with peer ${connectionId}`, error);
+                }
+            }
+            return true;
+        } finally {
+            screenShareStarting = false;
+        }
+    }
+
+    await stopScreenSharing();
+    return false;
+}
+
+async function stopScreenSharing(notifyBrowserStop = false) {
+    const stoppedTrack = screenTrack;
+    if (!stoppedTrack) return;
+
+    screenTrack = undefined;
+    localStream?.removeTrack(stoppedTrack);
+    if (stoppedTrack.readyState === "live") stoppedTrack.stop();
+
+    const restoredCamera = restoreCameraAfterScreenShare && cameraTrack?.readyState === "live"
+        ? cameraTrack
+        : null;
+    restoreCameraAfterScreenShare = false;
+    if (restoredCamera) {
+        try {
+            await restoredCamera.applyConstraints(getVideoConstraints());
+        } catch (error) {
+            console.warn("Unable to apply the selected camera quality after screen sharing", error);
+        }
+        localStream.addTrack(restoredCamera);
+        await showLocalVideo(restoredCamera);
+    } else if (localVideoElement) {
+        localVideoElement.srcObject = null;
+        localVideoElement.hidden = true;
+    }
+
+    for (const [connectionId, peer] of peers) {
+        try {
+            const sender = peer.connection.getSenders().find(candidate => candidate.track === stoppedTrack);
+            if (!sender) continue;
+
+            if (restoredCamera) {
+                await sender.replaceTrack(restoredCamera);
+                await applySenderVideoQuality(sender);
+            } else {
+                peer.connection.removeTrack(sender);
+                await negotiatePeer(connectionId, peer);
+            }
+        } catch (error) {
+            console.warn(`Unable to restore video for peer ${connectionId}`, error);
+        }
+    }
+
+    if (notifyBrowserStop) {
+        dotNetReference?.invokeMethodAsync("ScreenSharingStopped", Boolean(restoredCamera)).catch(() => {});
+    }
 }
 
 async function showLocalVideo(videoTrack) {
@@ -255,6 +384,161 @@ export function supportsAudioOutputSelection() {
 
 export function usesAudioSessionOutputModes() {
     return "audioSession" in navigator;
+}
+
+export function supportsLiveTranscription() {
+    return Boolean(window.AudioContext || window.webkitAudioContext) && "Worker" in window;
+}
+
+export async function setTranscriptionEnabled(enabled) {
+    if (enabled) {
+        if (transcriptionEnabled) return true;
+        if (!localStream) throw new Error("Join the media bridge before starting transcription");
+        if (!supportsLiveTranscription()) {
+            throw new Error("Live transcription is not supported by this browser");
+        }
+
+        transcriptionEnabled = true;
+        transcriptionWorker = new Worker(
+            new URL("./transcription-worker.js?version=whisper-tiny-v1", import.meta.url),
+            { type: "module" });
+        transcriptionWorker.onmessage = handleTranscriptionWorkerMessage;
+        transcriptionWorker.onerror = event => {
+            notifyTranscriptionStatus(`Transcription stopped: ${event.message || "worker error"}`, true);
+            stopTranscription();
+        };
+        transcriptionWorker.postMessage({ type: "initialize" });
+
+        const AudioContextType = window.AudioContext || window.webkitAudioContext;
+        transcriptionContext = new AudioContextType();
+        await transcriptionContext.resume();
+        transcriptionProcessor = transcriptionContext.createScriptProcessor(4096, 1, 1);
+        transcriptionProcessor.onaudioprocess = collectTranscriptionAudio;
+        transcriptionSink = transcriptionContext.createGain();
+        transcriptionSink.gain.value = 0;
+        transcriptionProcessor.connect(transcriptionSink);
+        transcriptionSink.connect(transcriptionContext.destination);
+
+        connectTranscriptionStream("local", localStream);
+        for (const [connectionId, peer] of peers) {
+            if (peer.audio.srcObject) connectTranscriptionStream(connectionId, peer.audio.srcObject);
+        }
+        notifyTranscriptionStatus("Preparing on-device transcription model...", false);
+        return true;
+    }
+
+    stopTranscription();
+    return false;
+}
+
+function connectTranscriptionStream(id, stream) {
+    if (!transcriptionEnabled || !transcriptionContext || !transcriptionProcessor ||
+        transcriptionSources.has(id) || stream.getAudioTracks().length === 0) return;
+
+    const source = transcriptionContext.createMediaStreamSource(stream);
+    source.connect(transcriptionProcessor);
+    transcriptionSources.set(id, source);
+}
+
+function disconnectTranscriptionStream(id) {
+    transcriptionSources.get(id)?.disconnect();
+    transcriptionSources.delete(id);
+}
+
+function collectTranscriptionAudio(event) {
+    if (!transcriptionEnabled) return;
+
+    const samples = resampleAudio(
+        event.inputBuffer.getChannelData(0),
+        event.inputBuffer.sampleRate,
+        transcriptionSampleRate);
+    transcriptionSamples.push(samples);
+    transcriptionSampleCount += samples.length;
+    if (!transcriptionBusy && transcriptionSampleCount >= transcriptionWindowSamples) {
+        sendTranscriptionWindow();
+    }
+
+    const maximumBufferedSamples = transcriptionWindowSamples * 2;
+    while (transcriptionSampleCount > maximumBufferedSamples && transcriptionSamples.length > 1) {
+        transcriptionSampleCount -= transcriptionSamples.shift().length;
+    }
+}
+
+function sendTranscriptionWindow() {
+    if (!transcriptionWorker || transcriptionBusy || transcriptionSampleCount === 0) return;
+
+    const audio = new Float32Array(transcriptionSampleCount);
+    let offset = 0;
+    for (const samples of transcriptionSamples) {
+        audio.set(samples, offset);
+        offset += samples.length;
+    }
+    transcriptionSamples = [];
+    transcriptionSampleCount = 0;
+    const rootMeanSquare = Math.sqrt(
+        audio.reduce((sum, sample) => sum + sample * sample, 0) / audio.length);
+    if (rootMeanSquare < 0.005) return;
+
+    transcriptionBusy = true;
+    transcriptionWorker.postMessage({ type: "transcribe", audio }, [audio.buffer]);
+}
+
+function resampleAudio(input, inputSampleRate, outputSampleRate) {
+    if (inputSampleRate === outputSampleRate) return new Float32Array(input);
+
+    const ratio = inputSampleRate / outputSampleRate;
+    const output = new Float32Array(Math.floor(input.length / ratio));
+    for (let index = 0; index < output.length; index++) {
+        const inputIndex = index * ratio;
+        const lowerIndex = Math.floor(inputIndex);
+        const upperIndex = Math.min(lowerIndex + 1, input.length - 1);
+        const weight = inputIndex - lowerIndex;
+        output[index] = input[lowerIndex] * (1 - weight) + input[upperIndex] * weight;
+    }
+    return output;
+}
+
+function handleTranscriptionWorkerMessage(event) {
+    if (!transcriptionEnabled) return;
+
+    const message = event.data;
+    if (message?.type === "result") {
+        transcriptionBusy = false;
+        if (message.text) {
+            dotNetReference?.invokeMethodAsync("TranscriptionTextReceived", message.text).catch(() => {});
+        }
+        if (transcriptionSampleCount >= transcriptionWindowSamples) sendTranscriptionWindow();
+    } else if (message?.type === "status") {
+        notifyTranscriptionStatus(message.message, false);
+    } else if (message?.type === "error") {
+        transcriptionBusy = false;
+        notifyTranscriptionStatus(`Transcription stopped: ${message.message}`, true);
+        stopTranscription();
+    }
+}
+
+function notifyTranscriptionStatus(message, failed) {
+    dotNetReference?.invokeMethodAsync("TranscriptionStatusChanged", message, failed).catch(() => {});
+}
+
+function stopTranscription() {
+    transcriptionEnabled = false;
+    transcriptionBusy = false;
+    transcriptionSamples = [];
+    transcriptionSampleCount = 0;
+    for (const source of transcriptionSources.values()) source.disconnect();
+    transcriptionSources.clear();
+    if (transcriptionProcessor) {
+        transcriptionProcessor.onaudioprocess = null;
+        transcriptionProcessor.disconnect();
+    }
+    transcriptionSink?.disconnect();
+    transcriptionContext?.close().catch(() => {});
+    transcriptionWorker?.terminate();
+    transcriptionProcessor = undefined;
+    transcriptionSink = undefined;
+    transcriptionContext = undefined;
+    transcriptionWorker = undefined;
 }
 
 export async function chooseAudioOutput() {
@@ -392,6 +676,7 @@ export async function getConnectionDiagnostics() {
         },
         currentDataRateMbps: aggregateDataRates(peerDiagnostics),
         videoEnabled: Boolean(localStream?.getVideoTracks().some(track => track.readyState === "live")),
+        screenSharing: Boolean(screenTrack?.readyState === "live"),
         videoQualityMode,
         videoQuality,
         videoMaxBitrate: videoQualityProfiles[videoQuality].maxBitrate,
@@ -535,6 +820,7 @@ export function removeParticipant(connectionId) {
     if (!peer) return;
 
     peer.connection.close();
+    disconnectTranscriptionStream(connectionId);
     peer.audio.remove();
     peer.tile.remove();
     liveDataRateSamples.delete(connectionId);
@@ -542,6 +828,7 @@ export function removeParticipant(connectionId) {
 }
 
 export function leave() {
+    stopTranscription();
     clearInterval(adaptationTimer);
     adaptationTimer = undefined;
     goodNetworkSamples = 0;
@@ -562,8 +849,14 @@ export function leave() {
             track.stop();
         }
     }
+    if (cameraTrack && !localStream?.getTracks().includes(cameraTrack)) cameraTrack.stop();
+    if (screenTrack && !localStream?.getTracks().includes(screenTrack)) screenTrack.stop();
 
     localStream = undefined;
+    cameraTrack = undefined;
+    screenTrack = undefined;
+    restoreCameraAfterScreenShare = false;
+    screenShareStarting = false;
     if (localVideoElement) {
         localVideoElement.srcObject = null;
         localVideoElement.hidden = true;
@@ -721,6 +1014,10 @@ async function createPeer(connectionId, participantName) {
         }
         mediaElement.srcObject = mediaStream;
 
+        if (event.track.kind === "audio") {
+            connectTranscriptionStream(connectionId, mediaStream);
+        }
+
         if (event.track.kind === "video") {
             mediaElement.play().catch(error => {
                 console.warn("Unable to start remote video playback", error);
@@ -811,6 +1108,11 @@ async function negotiatePeer(connectionId, peer) {
 
 async function handleLocalVideoEnded(event) {
     const endedTrack = event.target;
+    if (endedTrack === cameraTrack) cameraTrack = undefined;
+    if (screenTrack?.readyState === "live") {
+        restoreCameraAfterScreenShare = false;
+        return;
+    }
     localStream?.removeTrack(endedTrack);
     if (localVideoElement) {
         localVideoElement.srcObject = null;
@@ -827,6 +1129,14 @@ async function handleLocalVideoEnded(event) {
         console.warn("Unable to renegotiate after the camera stopped", error);
     }
     dotNetReference?.invokeMethodAsync("VideoStopped").catch(() => {});
+}
+
+async function handleScreenShareEnded() {
+    try {
+        await stopScreenSharing(true);
+    } catch (error) {
+        console.warn("Unable to stop screen sharing", error);
+    }
 }
 
 async function addPendingCandidates(peer) {
@@ -911,7 +1221,10 @@ async function applySenderAudioQuality(sender) {
 }
 
 async function applySenderVideoQuality(sender) {
-    const profile = videoQualityProfiles[videoQuality];
+    const sharingScreen = sender.track === screenTrack;
+    const profile = sharingScreen
+        ? { frameRate: 15, maxBitrate: 1500000 }
+        : videoQualityProfiles[videoQuality];
     const parameters = sender.getParameters();
     if (!parameters.encodings?.length) {
         parameters.encodings = [{}];
@@ -920,6 +1233,7 @@ async function applySenderVideoQuality(sender) {
         encoding.maxBitrate = profile.maxBitrate;
         encoding.maxFramerate = profile.frameRate;
     }
+    parameters.degradationPreference = sharingScreen ? "maintain-resolution" : "balanced";
     await sender.setParameters(parameters);
 }
 
@@ -1045,6 +1359,7 @@ async function setEffectiveVideoQuality(selectedVideoQuality) {
 
     if (localStream) {
         const constraintResults = await Promise.allSettled(localStream.getVideoTracks()
+            .filter(track => track === cameraTrack)
             .map(track => track.applyConstraints(getVideoConstraints())));
         for (const result of constraintResults) {
             if (result.status === "rejected") {

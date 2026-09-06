@@ -1,3 +1,20 @@
+.saved-login-actions {
+    display: grid;
+    grid-template-columns: minmax(14rem, 1fr) auto auto;
+    gap: .5rem;
+    align-items: center;
+}
+
+@media (max-width: 575.98px) {
+    .saved-login-actions {
+        grid-template-columns: 1fr 1fr;
+    }
+
+    .saved-login-actions .form-select {
+        grid-column: 1 / -1;
+    }
+}
+
 h1:focus {
     outline: none;
 }
@@ -125,6 +142,29 @@ pre {
     gap: 0.5rem 1rem;
     justify-content: center;
     font-variant-numeric: tabular-nums;
+}
+
+.voice-transcript {
+    border-left: 3px solid #198754;
+    min-width: 0;
+    padding-left: 0.75rem;
+}
+
+.voice-transcript-header {
+    align-items: center;
+    display: flex;
+    justify-content: space-between;
+    margin-bottom: 0.35rem;
+}
+
+.voice-transcript-content {
+    max-height: 12rem;
+    overflow-y: auto;
+}
+
+.voice-transcript-content p {
+    margin: 0.3rem 0 0;
+    overflow-wrap: anywhere;
 }
 
 .voice-video-grid {

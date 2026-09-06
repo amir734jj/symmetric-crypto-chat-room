@@ -16,7 +16,7 @@ self.onrtctransform = event => {
             async transform(frame, controller) {
                 const input = new Uint8Array(frame.data);
                 const clearHeaderLength = mediaKind === "video"
-                    ? clearHeaderLengths[frame.type] ?? clearHeaderLengths.delta
+                    ? getVp8ClearHeaderLength(input)
                     : clearHeaderLengths.audio;
                 const output = operation === "encrypt"
                     ? await encryptFrame(input, clearHeaderLength, counterPrefix, cryptoKey, frameCounter++)
@@ -29,6 +29,11 @@ self.onrtctransform = event => {
         }))
         .pipeTo(event.transformer.writable);
 };
+
+function getVp8ClearHeaderLength(frame) {
+    if (frame.byteLength === 0) return clearHeaderLengths.delta;
+    return (frame[0] & 0x01) === 0 ? clearHeaderLengths.key : clearHeaderLengths.delta;
+}
 
 function createInitialFrameCounter() {
     return crypto.getRandomValues(new BigUint64Array(1))[0];

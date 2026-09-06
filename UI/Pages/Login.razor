@@ -5,6 +5,8 @@
 @inject SignalRStateManager SignalRStateManager
 @inject NavigationManager Navigation
 @inject ILogger<Login> Logger
+@inject IJSRuntime JSRuntime
+@implements IAsyncDisposable
 @attribute [AllowAnonymous]
 
 <PageTitle>Login </PageTitle>
@@ -15,6 +17,25 @@
         Your <code>password</code> is not shared, both encryption and decryption (<code>AES-256-CTR</code> with
         <code>SHA-256</code> hash) is all done in client-side
     </p>
+
+    @if (_savedLogins.Count > 0)
+    {
+        <div class="saved-login-picker mb-3">
+            <label for="saved-login" class="form-label">Previous login</label>
+            <div class="saved-login-actions">
+                <select id="saved-login" class="form-select" @bind="_selectedSavedLoginId" @bind:after="PopulateFromSavedLogin">
+                    <option value="">Choose a previous login</option>
+                    @foreach (var login in _savedLogins)
+                    {
+                        <option value="@login.Id">@login.Name in @login.Channel</option>
+                    }
+                </select>
+                <HxButton Color="ThemeColor.Primary" Enabled="@HasSelectedSavedLogin" OnClick="LoginWithSavedCredentials">Quick login</HxButton>
+                <HxButton Color="ThemeColor.Danger" Enabled="@HasSelectedSavedLogin" OnClick="RemoveSavedLogin">Remove</HxButton>
+            </div>
+            <div class="form-text">Saved credentials are stored unencrypted in this browser's local storage.</div>
+        </div>
+    }
     
     <EditForm Model="@_model" OnValidSubmit="@(ValidFormSubmitted)" OnInvalidSubmit="@(InvalidFormSubmitted)">
         <DataAnnotationsValidator/>
@@ -34,12 +55,51 @@
 
 @code {
     readonly LoginViewModel _model = new();
+    readonly List<SavedLogin> _savedLogins = [];
+    IJSObjectReference? _savedLoginsModule;
+    string _selectedSavedLoginId = string.Empty;
+
+    bool HasSelectedSavedLogin => FindSelectedSavedLogin() != null;
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (!firstRender) return;
+
+        try
+        {
+            _savedLoginsModule = await JSRuntime.InvokeAsync<IJSObjectReference>("import", "./js/saved-logins.js");
+            await RefreshSavedLogins();
+            StateHasChanged();
+        }
+        catch (Exception e)
+        {
+            Logger.LogWarning(e, "Failed to load saved logins");
+        }
+    }
 
     async Task ValidFormSubmitted(EditContext editContext)
     {
+        await Login(_model);
+    }
+
+    async Task LoginWithSavedCredentials()
+    {
+        var savedLogin = FindSelectedSavedLogin();
+        if (savedLogin == null) return;
+
+        CopyToModel(savedLogin);
+        await Login(_model);
+    }
+
+    async Task Login(LoginViewModel login)
+    {
         try
         {
-            await SignalRStateManager.Login(_model);
+            await SignalRStateManager.Login(login);
+            if (_savedLoginsModule != null)
+            {
+                await _savedLoginsModule.InvokeVoidAsync("saveLogin", login);
+            }
 
             Navigation.NavigateTo("/");
         }
@@ -49,8 +109,56 @@
         }
     }
 
+    void PopulateFromSavedLogin()
+    {
+        var savedLogin = FindSelectedSavedLogin();
+        if (savedLogin != null) CopyToModel(savedLogin);
+    }
+
+    async Task RemoveSavedLogin()
+    {
+        if (_savedLoginsModule == null || !HasSelectedSavedLogin) return;
+
+        await _savedLoginsModule.InvokeVoidAsync("removeSavedLogin", _selectedSavedLoginId);
+        _selectedSavedLoginId = string.Empty;
+        await RefreshSavedLogins();
+    }
+
+    async Task RefreshSavedLogins()
+    {
+        if (_savedLoginsModule == null) return;
+
+        var savedLogins = await _savedLoginsModule.InvokeAsync<SavedLogin[]>("getSavedLogins");
+        _savedLogins.Clear();
+        _savedLogins.AddRange(savedLogins);
+    }
+
+    SavedLogin? FindSelectedSavedLogin() =>
+        _savedLogins.FirstOrDefault(login => login.Id == _selectedSavedLoginId);
+
+    void CopyToModel(SavedLogin savedLogin)
+    {
+        _model.Name = savedLogin.Name;
+        _model.Channel = savedLogin.Channel;
+        _model.Password = savedLogin.Password;
+    }
+
     void InvalidFormSubmitted(EditContext editContext)
     {
         Logger.LogError("Form validation failed because of {}", editContext.GetValidationMessages());
+    }
+
+    public async ValueTask DisposeAsync()
+    {
+        if (_savedLoginsModule != null) await _savedLoginsModule.DisposeAsync();
+    }
+
+    sealed class SavedLogin
+    {
+        public string Id { get; set; } = string.Empty;
+        public string Name { get; set; } = string.Empty;
+        public string Channel { get; set; } = string.Empty;
+        public string Password { get; set; } = string.Empty;
+        public DateTimeOffset LastUsedAt { get; set; }
     }
 }
