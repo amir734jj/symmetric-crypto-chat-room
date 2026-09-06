@@ -233,7 +233,7 @@
             <button type="button" class="voice-video-focus" title="Focus video" aria-label="Focus your video" aria-pressed="false" @onclick="ToggleLocalVideoFocus">
                 <span aria-hidden="true">&#x26F6;</span>
             </button>
-            <video @ref="_localVideo" class="voice-video voice-video-local" autoplay muted playsinline aria-label="@(_screenSharing ? "Your shared screen preview" : "Your camera preview")"></video>
+            <video @ref="_localVideo" class="@($"voice-video{(_screenSharing ? string.Empty : " voice-video-local")}")" autoplay muted playsinline aria-label="@(_screenSharing ? "Your shared screen preview" : "Your camera preview")"></video>
             <figcaption>@(_screenSharing ? "Shared screen" : State.UserInfo?.Name ?? "You") <span>(You)</span></figcaption>
         </figure>
         <div class="voice-remote-media" @ref="_remoteMediaContainer"></div>
@@ -245,7 +245,7 @@
 </section>
 
 @code {
-    private const string VoiceModulePath = "./js/voice-chat.js?v=20260906-7";
+    private const string VoiceModulePath = "./js/voice-chat.js?v=20260906-8";
 
     private static readonly TimeSpan RingTimeout = TimeSpan.FromSeconds(30);
     private readonly HashSet<string> _participantIds = [];

@@ -298,7 +298,7 @@ export async function setVideoEnabled(enabled) {
 
         cameraTrack = videoTrack;
         videoTrack.addEventListener("ended", handleLocalVideoEnded, { once: true });
-        await showLocalVideo(videoTrack);
+        await showLocalVideo(videoTrack, true);
         localStream.addTrack(videoTrack);
 
         for (const [connectionId, peer] of peers) {
@@ -350,7 +350,7 @@ export async function setScreenSharing(enabled) {
                 throw new Error("The media bridge was left before screen sharing started");
             }
 
-            await showLocalVideo(displayTrack);
+            await showLocalVideo(displayTrack, false);
             restoreCameraAfterScreenShare = cameraTrack?.readyState === "live";
             if (restoreCameraAfterScreenShare) localStream.removeTrack(cameraTrack);
             screenTrack = displayTrack;
@@ -401,7 +401,7 @@ async function stopScreenSharing(notifyBrowserStop = false) {
             console.warn("Unable to apply the selected camera quality after screen sharing", error);
         }
         localStream.addTrack(restoredCamera);
-        await showLocalVideo(restoredCamera);
+        await showLocalVideo(restoredCamera, true);
     } else if (localVideoElement) {
         clearVideoFocusForElement(localVideoElement);
         localVideoElement.srcObject = null;
@@ -430,11 +430,12 @@ async function stopScreenSharing(notifyBrowserStop = false) {
     }
 }
 
-async function showLocalVideo(videoTrack) {
+async function showLocalVideo(videoTrack, mirrored) {
     localVideoElement.autoplay = true;
     localVideoElement.defaultMuted = true;
     localVideoElement.muted = true;
     localVideoElement.playsInline = true;
+    localVideoElement.classList.toggle("voice-video-local", mirrored);
     localVideoElement.srcObject = new MediaStream([videoTrack]);
     localVideoElement.hidden = false;
 
