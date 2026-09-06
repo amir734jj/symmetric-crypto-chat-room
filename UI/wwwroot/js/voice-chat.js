@@ -342,6 +342,13 @@ export async function getConnectionDiagnostics() {
 
             const stats = await peer.connection.getStats();
             const { selectedPair, reports } = getSelectedCandidatePair(stats);
+            let inboundVideo;
+            let outboundVideo;
+            stats.forEach(report => {
+                const mediaKind = report.kind ?? report.mediaType;
+                if (report.type === "inbound-rtp" && mediaKind === "video") inboundVideo = report;
+                if (report.type === "outbound-rtp" && mediaKind === "video") outboundVideo = report;
+            });
 
             const localCandidate = selectedPair
                 ? sanitizeCandidate(reports.get(selectedPair.localCandidateId))
@@ -357,6 +364,8 @@ export async function getConnectionDiagnostics() {
                 signalingState: peer.connection.signalingState,
                 usingTurnRelay: localCandidate?.candidateType === "relay",
                 currentDataRateMbps: calculateDataRateMbps(initialPair, selectedPair),
+                inboundVideo: sanitizeVideoStats(inboundVideo, reports),
+                outboundVideo: sanitizeVideoStats(outboundVideo, reports),
                 selectedCandidatePair: selectedPair ? {
                     state: selectedPair.state,
                     currentRoundTripTime: selectedPair.currentRoundTripTime,
@@ -416,6 +425,29 @@ export async function getConnectionDiagnostics() {
         configuredIceServers: peerConfiguration?.iceServers.map(server => server.urls),
         peerConnections: peerDiagnostics
     }, null, 2);
+}
+
+function sanitizeVideoStats(report, reports) {
+    if (!report) return null;
+
+    return {
+        codec: reports.get(report.codecId)?.mimeType,
+        packetsReceived: report.packetsReceived,
+        packetsSent: report.packetsSent,
+        packetsLost: report.packetsLost,
+        retransmittedPacketsSent: report.retransmittedPacketsSent,
+        framesDecoded: report.framesDecoded,
+        framesEncoded: report.framesEncoded,
+        framesDropped: report.framesDropped,
+        keyFramesDecoded: report.keyFramesDecoded,
+        keyFramesEncoded: report.keyFramesEncoded,
+        nackCount: report.nackCount,
+        pliCount: report.pliCount,
+        firCount: report.firCount,
+        freezeCount: report.freezeCount,
+        jitter: report.jitter,
+        qualityLimitationReason: report.qualityLimitationReason
+    };
 }
 
 export async function getLiveDataRateMbps() {
@@ -746,11 +778,14 @@ function addLocalTrack(peer, track, remoteConnectionId) {
 function preferVp8(transceiver) {
     if (typeof transceiver?.setCodecPreferences !== "function") return;
 
-    const codecs = RTCRtpSender.getCapabilities("video")?.codecs
-        .filter(codec => codec.mimeType.toLowerCase() === "video/vp8");
-    if (codecs?.length) {
-        transceiver.setCodecPreferences(codecs);
-    }
+    const codecs = RTCRtpSender.getCapabilities("video")?.codecs;
+    if (!codecs?.length) return;
+
+    const vp8Codecs = codecs.filter(codec => codec.mimeType.toLowerCase() === "video/vp8");
+    if (vp8Codecs.length === 0) return;
+
+    const remainingCodecs = codecs.filter(codec => codec.mimeType.toLowerCase() !== "video/vp8");
+    transceiver.setCodecPreferences([...vp8Codecs, ...remainingCodecs]);
 }
 
 function setReceiverTransform(receiver, senderId, mediaKind) {
