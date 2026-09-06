@@ -11,7 +11,6 @@
             @if (_joined)
             {
                 <span class="ms-2 text-muted">@(_participantIds.Count + 1) connected</span>
-                <span class="ms-2 text-muted">Call @FormatCallDuration(_callDuration)</span>
             }
         </div>
 
@@ -89,6 +88,15 @@
             }
         </div>
     </div>
+
+    @if (_joined)
+    {
+        <div class="voice-live-status mt-2" aria-live="off">
+            <span>Call @FormatCallDuration(_callDuration)</span>
+            <span>Up @_sendMbps.ToString("0.000") Mbps</span>
+            <span>Down @_receiveMbps.ToString("0.000") Mbps</span>
+        </div>
+    }
 
     <div class="voice-presence mt-3">
         <strong>Online</strong>
@@ -176,7 +184,10 @@
     }
 
     <div class="voice-video-grid mt-3">
-        <video @ref="_localVideo" class="voice-video voice-video-local" autoplay muted playsinline hidden="@(!_videoEnabled)" aria-label="Your camera preview"></video>
+        <figure class="voice-video-tile" hidden="@(!_videoEnabled)">
+            <video @ref="_localVideo" class="voice-video voice-video-local" autoplay muted playsinline aria-label="Your camera preview"></video>
+            <figcaption>@(State.UserInfo?.Name ?? "You") <span>(You)</span></figcaption>
+        </figure>
         <div class="voice-remote-media" @ref="_remoteMediaContainer"></div>
     </div>
 
@@ -199,6 +210,7 @@
     private bool _busy;
     private bool _checkingTurn;
     private bool _showDebug;
+    private long _debugRequestVersion;
     private bool _audioOutputSelectionSupported;
     private bool _usesAudioSessionOutputModes;
     private string? _error;
@@ -211,6 +223,8 @@
     private CancellationTokenSource? _callTimerCancellation;
     private System.Diagnostics.Stopwatch? _callStopwatch;
     private TimeSpan _callDuration;
+    private double _sendMbps;
+    private double _receiveMbps;
     private string? _callStatus;
     private string _audioQuality = "auto";
     private string _effectiveAudioQuality = "standard";
@@ -303,7 +317,11 @@
             _participantIds.UnionWith(participants.Select(participant => participant.ConnectionId));
             await _module.InvokeVoidAsync(
                 "connectToParticipants",
-                (object)participants.Select(participant => participant.ConnectionId).ToArray());
+                (object)participants.Select(participant => new
+                {
+                    participant.ConnectionId,
+                    participant.Name
+                }).ToArray());
         }
         catch (Exception exception)
         {
@@ -622,6 +640,8 @@
             return;
         }
 
+        _showDebug = true;
+        StateHasChanged();
         await RefreshDebug();
     }
 
@@ -629,12 +649,17 @@
     {
         if (_module == null) return;
 
-        _debugInfo = await _module.InvokeAsync<string>("getConnectionDiagnostics");
-        _showDebug = true;
+        var requestVersion = ++_debugRequestVersion;
+        var debugInfo = await _module.InvokeAsync<string>("getConnectionDiagnostics");
+        if (_showDebug && requestVersion == _debugRequestVersion)
+        {
+            _debugInfo = debugInfo;
+        }
     }
 
     private void HideDebug()
     {
+        _debugRequestVersion++;
         _showDebug = false;
     }
 
@@ -650,7 +675,11 @@
         {
             if (!_joined || _module == null) return;
             _participantIds.Add(senderConnectionId);
-            await _module.InvokeVoidAsync("receiveOffer", senderConnectionId, offer);
+            var senderName = State.OnlineUsers
+                .FirstOrDefault(user => user.ConnectionId == senderConnectionId)?.Name
+                ?? (_incomingCallerConnectionId == senderConnectionId ? _incomingCallerName : null)
+                ?? "Participant";
+            await _module.InvokeVoidAsync("receiveOffer", senderConnectionId, senderName, offer);
             StateHasChanged();
         });
     }
@@ -775,9 +804,32 @@
         {
             while (await timer.WaitForNextTickAsync(cancellationToken))
             {
+                double[]? dataRates = null;
+                if (_joined && _module != null)
+                {
+                    try
+                    {
+                        dataRates = await _module.InvokeAsync<double[]?>(
+                            "getLiveDataRateMbps",
+                            cancellationToken);
+                    }
+                    catch when (cancellationToken.IsCancellationRequested || !_joined)
+                    {
+                    }
+                    catch
+                    {
+                        dataRates = null;
+                    }
+                }
+
                 await InvokeAsync(() =>
                 {
                     _callDuration = _callStopwatch?.Elapsed ?? TimeSpan.Zero;
+                    if (dataRates is { Length: >= 2 })
+                    {
+                        _sendMbps = dataRates[0];
+                        _receiveMbps = dataRates[1];
+                    }
                     StateHasChanged();
                 });
             }
@@ -795,6 +847,8 @@
         _callStopwatch?.Stop();
         _callStopwatch = null;
         _callDuration = TimeSpan.Zero;
+        _sendMbps = 0;
+        _receiveMbps = 0;
     }
 
     private static string FormatCallDuration(TimeSpan duration)

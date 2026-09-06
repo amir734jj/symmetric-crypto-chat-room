@@ -22,6 +22,7 @@ let audioOutputMode = "auto";
 let proximitySensor;
 let proximitySensorNear;
 const peers = new Map();
+const liveDataRateSamples = new Map();
 const audioQualityProfiles = {
     low: { sampleRate: 16000, maxBitrate: 16000 },
     standard: { sampleRate: 32000, maxBitrate: 32000 },
@@ -87,15 +88,15 @@ export async function initialize(
     notifyVideoQualityChanged();
 }
 
-export async function connectToParticipants(connectionIds) {
-    for (const connectionId of connectionIds) {
-        const peer = await createPeer(connectionId);
-        await negotiatePeer(connectionId, peer);
+export async function connectToParticipants(participants) {
+    for (const participant of participants) {
+        const peer = await createPeer(participant.connectionId, participant.name);
+        await negotiatePeer(participant.connectionId, peer);
     }
 }
 
-export async function receiveOffer(senderConnectionId, offerJson) {
-    const peer = await createPeer(senderConnectionId);
+export async function receiveOffer(senderConnectionId, senderName, offerJson) {
+    const peer = await createPeer(senderConnectionId, senderName);
     const offer = JSON.parse(offerJson);
     const offerCollision = peer.makingOffer || peer.connection.signalingState !== "stable";
     peer.ignoreOffer = !peer.polite && offerCollision;
@@ -372,6 +373,23 @@ export async function getConnectionDiagnostics() {
     }, null, 2);
 }
 
+export async function getLiveDataRateMbps() {
+    const rates = await Promise.all([...peers.entries()].map(async ([connectionId, peer]) => {
+        const stats = await peer.connection.getStats();
+        const currentPair = getSelectedCandidatePair(stats).selectedPair;
+        const previousPair = liveDataRateSamples.get(connectionId);
+        liveDataRateSamples.set(connectionId, currentPair);
+        return calculateDataRateMbps(previousPair, currentPair);
+    }));
+
+    const measuredRates = rates.filter(rate => rate !== null);
+    if (measuredRates.length === 0) return null;
+
+    const sendMbps = measuredRates.reduce((total, rate) => total + rate.sendMbps, 0);
+    const receiveMbps = measuredRates.reduce((total, rate) => total + rate.receiveMbps, 0);
+    return [roundMbps(sendMbps), roundMbps(receiveMbps), roundMbps(sendMbps + receiveMbps)];
+}
+
 function getSelectedCandidatePair(stats) {
     const reports = new Map();
     let selectedPair;
@@ -441,7 +459,8 @@ export function removeParticipant(connectionId) {
 
     peer.connection.close();
     peer.audio.remove();
-    peer.video.remove();
+    peer.tile.remove();
+    liveDataRateSamples.delete(connectionId);
     peers.delete(connectionId);
 }
 
@@ -479,6 +498,7 @@ export function leave() {
     localConnectionId = undefined;
     selectedAudioOutputId = "";
     audioOutputMode = "auto";
+    liveDataRateSamples.clear();
     encryptionWorker?.terminate();
     encryptionWorker = undefined;
 }
@@ -562,9 +582,12 @@ function stopProximityRouting() {
     proximitySensorNear = undefined;
 }
 
-async function createPeer(connectionId) {
+async function createPeer(connectionId, participantName) {
     const existing = peers.get(connectionId);
-    if (existing) return existing;
+    if (existing) {
+        if (participantName) existing.caption.textContent = participantName;
+        return existing;
+    }
 
     const connection = new RTCPeerConnection(peerConfiguration);
     const audio = document.createElement("audio");
@@ -575,18 +598,28 @@ async function createPeer(connectionId) {
     }
     remoteMediaContainer.appendChild(audio);
 
+    const tile = document.createElement("figure");
+    tile.className = "voice-video-tile";
+    tile.hidden = true;
+
     const video = document.createElement("video");
     video.autoplay = true;
     video.playsInline = true;
-    video.hidden = true;
     video.className = "voice-video voice-video-remote";
-    video.setAttribute("aria-label", "Remote participant video");
-    remoteMediaContainer.appendChild(video);
+    video.setAttribute("aria-label", `${participantName || "Remote participant"} camera`);
+    tile.appendChild(video);
+
+    const caption = document.createElement("figcaption");
+    caption.textContent = participantName || "Participant";
+    tile.appendChild(caption);
+    remoteMediaContainer.appendChild(tile);
 
     const peer = {
         connection,
         audio,
         video,
+        tile,
+        caption,
         pendingCandidates: [],
         makingOffer: false,
         ignoreOffer: false,
@@ -615,7 +648,7 @@ async function createPeer(connectionId) {
                 console.warn("Unable to start remote video playback", error);
             });
             const updateVideoVisibility = () => {
-                video.hidden = mediaStream.getVideoTracks()
+                tile.hidden = mediaStream.getVideoTracks()
                     .every(track => track.muted || track.readyState === "ended");
             };
             event.track.addEventListener("mute", updateVideoVisibility);
@@ -647,7 +680,13 @@ function addLocalTrack(peer, track, remoteConnectionId) {
     const sender = peer.connection.addTrack(track, localStream);
     sender.transform = new RTCRtpScriptTransform(
         encryptionWorker,
-        { operation: "encrypt", key: voiceKey, senderId: localConnectionId, mediaKind: track.kind });
+        {
+            operation: "encrypt",
+            key: voiceKey,
+            senderId: localConnectionId,
+            mediaKind: track.kind,
+            contextId: remoteConnectionId
+        });
 
     const transceiver = peer.connection.getTransceivers()
         .find(candidate => candidate.sender === sender);
@@ -672,7 +711,7 @@ function setReceiverTransform(receiver, senderId, mediaKind) {
     if (receiver.transform) return;
     receiver.transform = new RTCRtpScriptTransform(
         encryptionWorker,
-        { operation: "decrypt", key: voiceKey, senderId, mediaKind });
+        { operation: "decrypt", key: voiceKey, senderId, mediaKind, contextId: localConnectionId });
 }
 
 async function negotiatePeer(connectionId, peer) {
