@@ -85,7 +85,7 @@ export async function initialize(
     videoQualityMode = normalizeVideoQualityMode(selectedVideoQuality);
     videoQuality = videoQualityMode === "auto" ? "standard" : videoQualityMode;
     encryptionWorker = new Worker(
-        new URL("./voice-crypto-worker.js?version=vp8-frame-header", import.meta.url),
+        new URL("./voice-crypto-worker.js?version=vp8-payload-descriptor-v2", import.meta.url),
         { type: "module" });
 
     const host = turnCredentials.host || window.location.hostname;

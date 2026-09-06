@@ -10,14 +10,18 @@ self.onrtctransform = event => {
     const cryptoKey = importKey(key);
     const counterPrefix = createCounterPrefix(senderId, mediaKind, contextId);
     let frameCounter = operation === "encrypt" ? createInitialFrameCounter() : 0n;
+    let hasVp8PayloadDescriptor = null;
 
     event.transformer.readable
         .pipeThrough(new TransformStream({
             async transform(frame, controller) {
                 const input = new Uint8Array(frame.data);
-                const clearHeaderLength = mediaKind === "video"
-                    ? getVp8ClearHeaderLength(input)
-                    : clearHeaderLengths.audio;
+                let clearHeaderLength = clearHeaderLengths.audio;
+                if (operation === "encrypt" && mediaKind === "video") {
+                    const vp8Header = getVp8ClearHeader(input, frame.type, hasVp8PayloadDescriptor);
+                    clearHeaderLength = vp8Header.length;
+                    hasVp8PayloadDescriptor = vp8Header.hasPayloadDescriptor;
+                }
                 const output = operation === "encrypt"
                     ? await encryptFrame(input, clearHeaderLength, counterPrefix, cryptoKey, frameCounter++)
                     : await decryptFrame(input, counterPrefix, cryptoKey);
@@ -30,9 +34,57 @@ self.onrtctransform = event => {
         .pipeTo(event.transformer.writable);
 };
 
-function getVp8ClearHeaderLength(frame) {
-    if (frame.byteLength === 0) return clearHeaderLengths.delta;
-    return (frame[0] & 0x01) === 0 ? clearHeaderLengths.key : clearHeaderLengths.delta;
+function getVp8ClearHeader(frame, frameType, hasPayloadDescriptor) {
+    if (frame.byteLength === 0) return { length: 0, hasPayloadDescriptor };
+
+    if (hasPayloadDescriptor === null) {
+        if (hasVp8KeyFrameHeader(frame, 0)) hasPayloadDescriptor = false;
+        else {
+            const candidateLength = getVp8PayloadDescriptorLength(frame);
+            if (candidateLength > 0 && hasVp8KeyFrameHeader(frame, candidateLength)) {
+                hasPayloadDescriptor = true;
+            }
+        }
+    }
+
+    const descriptorLength = hasPayloadDescriptor === true
+        ? getVp8PayloadDescriptorLength(frame)
+        : 0;
+    const headerLength = frameType === "key" ||
+        hasVp8KeyFrameHeader(frame, descriptorLength) ||
+        (frameType !== "delta" && (frame[descriptorLength] & 0x01) === 0)
+        ? clearHeaderLengths.key
+        : clearHeaderLengths.delta;
+
+    return {
+        length: Math.min(descriptorLength + headerLength, frame.byteLength),
+        hasPayloadDescriptor
+    };
+}
+
+function hasVp8KeyFrameHeader(frame, offset) {
+    return offset + 5 < frame.byteLength &&
+        (frame[offset] & 0x01) === 0 &&
+        frame[offset + 3] === 0x9d &&
+        frame[offset + 4] === 0x01 &&
+        frame[offset + 5] === 0x2a;
+}
+
+function getVp8PayloadDescriptorLength(frame) {
+    if (frame.byteLength === 0 || (frame[0] & 0x5f) !== 0x10) return 0;
+
+    let offset = 1;
+    if ((frame[0] & 0x80) === 0) return offset;
+    if (offset >= frame.byteLength) return 0;
+
+    const extension = frame[offset++];
+    if ((extension & 0x80) !== 0) {
+        if (offset >= frame.byteLength) return 0;
+        offset += (frame[offset] & 0x80) !== 0 ? 2 : 1;
+    }
+    if ((extension & 0x40) !== 0) offset++;
+    if ((extension & 0x30) !== 0) offset++;
+    return offset <= frame.byteLength ? offset : 0;
 }
 
 function createInitialFrameCounter() {
