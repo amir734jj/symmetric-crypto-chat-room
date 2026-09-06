@@ -4,7 +4,7 @@ using System.ComponentModel.DataAnnotations;
 
 namespace Models
 {
-    public class MessagePayload
+    public class MessagePayload : IValidatableObject
     {
         public int Id { get; set; }
 
@@ -12,8 +12,7 @@ namespace Models
         
         public string Channel { get; set; }
         
-        [Required]
-        public string Message { get; set; }
+        public string Message { get; set; } = string.Empty;
         
         public DateTime Date { get; set; }
 
@@ -22,6 +21,16 @@ namespace Models
         public DateTimeOffset Expiration { get; set; }
         
         public string Token { get; set; }
+
+        public IEnumerable<ValidationResult> Validate(ValidationContext validationContext)
+        {
+            if (string.IsNullOrWhiteSpace(Message) && Files.Count == 0)
+            {
+                yield return new ValidationResult(
+                    "Enter a message or attach at least one file.",
+                    new[] { nameof(Message), nameof(Files) });
+            }
+        }
     }
 
     public class FilePayload
