@@ -290,24 +290,12 @@ async function setEffectiveAudioQuality(selectedAudioQuality) {
 export async function getConnectionDiagnostics() {
     const peerDiagnostics = await Promise.all(
         [...peers.entries()].map(async ([connectionId, peer]) => {
+            const initialStats = await peer.connection.getStats();
+            const initialPair = getSelectedCandidatePair(initialStats).selectedPair;
+            await delay(500);
+
             const stats = await peer.connection.getStats();
-            const reports = new Map();
-            let selectedPair;
-
-            stats.forEach(report => reports.set(report.id, report));
-            stats.forEach(report => {
-                if (report.type === "transport" && report.selectedCandidatePairId) {
-                    selectedPair = reports.get(report.selectedCandidatePairId);
-                }
-            });
-
-            if (!selectedPair) {
-                stats.forEach(report => {
-                    if (report.type === "candidate-pair" && report.state === "succeeded" && report.nominated) {
-                        selectedPair = report;
-                    }
-                });
-            }
+            const { selectedPair, reports } = getSelectedCandidatePair(stats);
 
             const localCandidate = selectedPair
                 ? sanitizeCandidate(reports.get(selectedPair.localCandidateId))
@@ -322,6 +310,7 @@ export async function getConnectionDiagnostics() {
                 iceConnectionState: peer.connection.iceConnectionState,
                 signalingState: peer.connection.signalingState,
                 usingTurnRelay: localCandidate?.candidateType === "relay",
+                currentDataRateMbps: calculateDataRateMbps(initialPair, selectedPair),
                 selectedCandidatePair: selectedPair ? {
                     state: selectedPair.state,
                     currentRoundTripTime: selectedPair.currentRoundTripTime,
@@ -346,6 +335,7 @@ export async function getConnectionDiagnostics() {
             passwordEncryption: voiceKey ? "AES-256-CTR" : "disabled",
             webRtcTransportEncryption: "DTLS-SRTP"
         },
+        currentDataRateMbps: aggregateDataRates(peerDiagnostics),
         videoEnabled: Boolean(localStream?.getVideoTracks().some(track => track.readyState === "live")),
         videoQualityMode,
         videoQuality,
@@ -380,6 +370,69 @@ export async function getConnectionDiagnostics() {
         configuredIceServers: peerConfiguration?.iceServers.map(server => server.urls),
         peerConnections: peerDiagnostics
     }, null, 2);
+}
+
+function getSelectedCandidatePair(stats) {
+    const reports = new Map();
+    let selectedPair;
+
+    stats.forEach(report => reports.set(report.id, report));
+    stats.forEach(report => {
+        if (report.type === "transport" && report.selectedCandidatePairId) {
+            selectedPair = reports.get(report.selectedCandidatePairId);
+        }
+    });
+
+    if (!selectedPair) {
+        stats.forEach(report => {
+            if (report.type === "candidate-pair" && report.state === "succeeded" && report.nominated) {
+                selectedPair = report;
+            }
+        });
+    }
+
+    return { selectedPair, reports };
+}
+
+function calculateDataRateMbps(initialPair, currentPair) {
+    if (!initialPair || !currentPair || initialPair.id !== currentPair.id) return null;
+    if (initialPair.bytesSent === undefined || currentPair.bytesSent === undefined ||
+        initialPair.bytesReceived === undefined || currentPair.bytesReceived === undefined) return null;
+
+    const elapsedSeconds = (currentPair.timestamp - initialPair.timestamp) / 1000;
+    if (elapsedSeconds <= 0) return null;
+
+    const sendMbps = Math.max(0, currentPair.bytesSent - initialPair.bytesSent) * 8 / elapsedSeconds / 1000000;
+    const receiveMbps = Math.max(0, currentPair.bytesReceived - initialPair.bytesReceived) * 8 / elapsedSeconds / 1000000;
+    return {
+        sampledOverMilliseconds: Math.round(elapsedSeconds * 1000),
+        sendMbps: roundMbps(sendMbps),
+        receiveMbps: roundMbps(receiveMbps),
+        totalMbps: roundMbps(sendMbps + receiveMbps)
+    };
+}
+
+function aggregateDataRates(peerDiagnostics) {
+    const measuredRates = peerDiagnostics
+        .map(peer => peer.currentDataRateMbps)
+        .filter(rate => rate !== null);
+    if (measuredRates.length === 0) return null;
+
+    const sendMbps = measuredRates.reduce((total, rate) => total + rate.sendMbps, 0);
+    const receiveMbps = measuredRates.reduce((total, rate) => total + rate.receiveMbps, 0);
+    return {
+        sendMbps: roundMbps(sendMbps),
+        receiveMbps: roundMbps(receiveMbps),
+        totalMbps: roundMbps(sendMbps + receiveMbps)
+    };
+}
+
+function roundMbps(value) {
+    return Math.round(value * 1000) / 1000;
+}
+
+function delay(milliseconds) {
+    return new Promise(resolve => setTimeout(resolve, milliseconds));
 }
 
 export function removeParticipant(connectionId) {
@@ -558,6 +611,9 @@ async function createPeer(connectionId) {
         mediaElement.srcObject = mediaStream;
 
         if (event.track.kind === "video") {
+            mediaElement.play().catch(error => {
+                console.warn("Unable to start remote video playback", error);
+            });
             const updateVideoVisibility = () => {
                 video.hidden = mediaStream.getVideoTracks()
                     .every(track => track.muted || track.readyState === "ended");
@@ -595,8 +651,21 @@ function addLocalTrack(peer, track, remoteConnectionId) {
 
     const transceiver = peer.connection.getTransceivers()
         .find(candidate => candidate.sender === sender);
+    if (track.kind === "video") {
+        preferVp8(transceiver);
+    }
     setReceiverTransform(transceiver.receiver, remoteConnectionId, track.kind);
     return sender;
+}
+
+function preferVp8(transceiver) {
+    if (typeof transceiver?.setCodecPreferences !== "function") return;
+
+    const codecs = RTCRtpSender.getCapabilities("video")?.codecs
+        .filter(codec => codec.mimeType.toLowerCase() === "video/vp8");
+    if (codecs?.length) {
+        transceiver.setCodecPreferences(codecs);
+    }
 }
 
 function setReceiverTransform(receiver, senderId, mediaKind) {

@@ -11,6 +11,7 @@
             @if (_joined)
             {
                 <span class="ms-2 text-muted">@(_participantIds.Count + 1) connected</span>
+                <span class="ms-2 text-muted">Call @FormatCallDuration(_callDuration)</span>
             }
         </div>
 
@@ -79,8 +80,8 @@
                 <HxButton Color="ThemeColor.Secondary" Enabled="@(!_busy)" OnClick="ToggleVideo">
                     @(_videoEnabled ? "Stop video" : "Start video")
                 </HxButton>
-                <HxButton Color="ThemeColor.Secondary" OnClick="ShowDebug">
-                    ICE debug
+                <HxButton Color="ThemeColor.Secondary" OnClick="ToggleDebug">
+                    @(_showDebug ? "Hide ICE debug" : "ICE debug")
                 </HxButton>
                 <HxButton Color="ThemeColor.Danger" OnClick="Leave">
                     @(_participantIds.Count > 0 ? "End call" : "Leave call")
@@ -162,7 +163,7 @@
             <div class="voice-debug-header">
                 <strong>ICE connection details</strong>
                 <div>
-                    <HxButton Size="ButtonSize.Small" Color="ThemeColor.Secondary" OnClick="ShowDebug">
+                    <HxButton Size="ButtonSize.Small" Color="ThemeColor.Secondary" OnClick="RefreshDebug">
                         Refresh
                     </HxButton>
                     <HxButton Size="ButtonSize.Small" Color="ThemeColor.Secondary" OnClick="HideDebug">
@@ -207,6 +208,9 @@
     private string? _outgoingCallConnectionId;
     private string? _outgoingCallName;
     private CancellationTokenSource? _outgoingCallTimeoutCancellation;
+    private CancellationTokenSource? _callTimerCancellation;
+    private System.Diagnostics.Stopwatch? _callStopwatch;
+    private TimeSpan _callDuration;
     private string? _callStatus;
     private string _audioQuality = "auto";
     private string _effectiveAudioQuality = "standard";
@@ -262,7 +266,7 @@
         {
             if (!_joined) return;
 
-            await CleanupBrowserVoice();
+            await CleanupBrowserVoice(preserveCallDuration: true);
             await Join();
             StateHasChanged();
         });
@@ -295,6 +299,7 @@
 
             var participants = await SignalRStateManager.JoinVoice();
             _joined = true;
+            StartCallTimer();
             _participantIds.UnionWith(participants.Select(participant => participant.ConnectionId));
             await _module.InvokeVoidAsync(
                 "connectToParticipants",
@@ -609,7 +614,18 @@
         }
     }
 
-    private async Task ShowDebug()
+    private async Task ToggleDebug()
+    {
+        if (_showDebug)
+        {
+            HideDebug();
+            return;
+        }
+
+        await RefreshDebug();
+    }
+
+    private async Task RefreshDebug()
     {
         if (_module == null) return;
 
@@ -742,7 +758,53 @@
         };
     }
 
-    private async Task CleanupBrowserVoice()
+    private void StartCallTimer()
+    {
+        if (_callStopwatch?.IsRunning == true) return;
+
+        StopCallTimer();
+        _callStopwatch = System.Diagnostics.Stopwatch.StartNew();
+        _callTimerCancellation = new CancellationTokenSource();
+        _ = UpdateCallDuration(_callTimerCancellation.Token);
+    }
+
+    private async Task UpdateCallDuration(CancellationToken cancellationToken)
+    {
+        using var timer = new PeriodicTimer(TimeSpan.FromSeconds(1));
+        try
+        {
+            while (await timer.WaitForNextTickAsync(cancellationToken))
+            {
+                await InvokeAsync(() =>
+                {
+                    _callDuration = _callStopwatch?.Elapsed ?? TimeSpan.Zero;
+                    StateHasChanged();
+                });
+            }
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+        }
+    }
+
+    private void StopCallTimer()
+    {
+        _callTimerCancellation?.Cancel();
+        _callTimerCancellation?.Dispose();
+        _callTimerCancellation = null;
+        _callStopwatch?.Stop();
+        _callStopwatch = null;
+        _callDuration = TimeSpan.Zero;
+    }
+
+    private static string FormatCallDuration(TimeSpan duration)
+    {
+        return duration.TotalHours >= 1
+            ? $"{(int)duration.TotalHours}:{duration.Minutes:00}:{duration.Seconds:00}"
+            : $"{duration.Minutes:00}:{duration.Seconds:00}";
+    }
+
+    private async Task CleanupBrowserVoice(bool preserveCallDuration = false)
     {
         if (_module != null)
         {
@@ -758,6 +820,10 @@
         _usesAudioSessionOutputModes = false;
         _audioOutputMode = "auto";
         _debugInfo = null;
+        if (!preserveCallDuration)
+        {
+            StopCallTimer();
+        }
     }
 
     public async ValueTask DisposeAsync()

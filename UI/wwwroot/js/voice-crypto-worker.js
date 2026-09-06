@@ -1,4 +1,8 @@
-const clearHeaderLength = 1;
+const clearHeaderLengths = {
+    key: 10,
+    delta: 3,
+    audio: 1
+};
 
 self.onrtctransform = event => {
     const { key, senderId, mediaKind } = event.transformer.options;
@@ -9,6 +13,9 @@ self.onrtctransform = event => {
         .pipeThrough(new TransformStream({
             async transform(frame, controller) {
                 const input = new Uint8Array(frame.data);
+                const clearHeaderLength = mediaKind === "video"
+                    ? clearHeaderLengths[frame.type] ?? clearHeaderLengths.delta
+                    : clearHeaderLengths.audio;
                 if (input.byteLength <= clearHeaderLength) {
                     controller.enqueue(frame);
                     return;
