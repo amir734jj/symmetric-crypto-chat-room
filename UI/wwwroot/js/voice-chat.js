@@ -159,9 +159,8 @@ export async function setVideoEnabled(enabled) {
         if (!videoTrack) throw new Error("No camera is available");
 
         videoTrack.addEventListener("ended", handleLocalVideoEnded, { once: true });
+        await showLocalVideo(videoTrack);
         localStream.addTrack(videoTrack);
-        localVideoElement.srcObject = new MediaStream([videoTrack]);
-        localVideoElement.hidden = false;
 
         for (const [connectionId, peer] of peers) {
             const sender = addLocalTrack(peer, videoTrack, connectionId);
@@ -183,6 +182,25 @@ export async function setVideoEnabled(enabled) {
         await negotiatePeer(connectionId, peer);
     }
     return false;
+}
+
+async function showLocalVideo(videoTrack) {
+    localVideoElement.autoplay = true;
+    localVideoElement.defaultMuted = true;
+    localVideoElement.muted = true;
+    localVideoElement.playsInline = true;
+    localVideoElement.srcObject = new MediaStream([videoTrack]);
+    localVideoElement.hidden = false;
+
+    try {
+        await localVideoElement.play();
+    } catch (error) {
+        localVideoElement.srcObject = null;
+        localVideoElement.hidden = true;
+        videoTrack.stop();
+        const message = error instanceof Error ? error.message : String(error);
+        throw new Error(`Unable to start the camera preview: ${message}`);
+    }
 }
 
 export function supportsAudioOutputSelection() {
