@@ -79,12 +79,15 @@
                 <HxButton Color="ThemeColor.Secondary" Enabled="@(!_busy && !_screenSharing)" OnClick="ToggleVideo">
                     @(_videoEnabled ? "Stop video" : "Start video")
                 </HxButton>
-                <HxButton Color="ThemeColor.Secondary" Enabled="@(!_busy)" OnClick="ToggleScreenSharing">
-                    @(_screenSharing ? "Stop sharing" : "Share screen")
-                </HxButton>
+                @if (_screenSharingSupported || _screenSharing)
+                {
+                    <HxButton Color="ThemeColor.Secondary" Enabled="@(!_busy)" OnClick="ToggleScreenSharing">
+                        @(_screenSharing ? "Stop sharing" : "Share screen")
+                    </HxButton>
+                }
                 @if (_liveTranscriptionSupported)
                 {
-                    <label class="voice-quality">
+                    <label class="voice-quality voice-transcription-model">
                         <span>Transcription model</span>
                         <select class="form-select form-select-sm" @bind="_transcriptionModel" disabled="@(_busy || _transcriptionEnabled)">
                             <option value="auto">Default (Auto) - Recommended: @TranscriptionModelLabel(_recommendedTranscriptionModel)</option>
@@ -96,7 +99,7 @@
                             <option value="small-en">English Small - Most accurate English, slowest</option>
                         </select>
                     </label>
-                    <HxButton Color="ThemeColor.Secondary" Enabled="@(!_busy)" OnClick="ToggleTranscription">
+                    <HxButton Color="ThemeColor.Secondary" Enabled="@(!_busy && (_transcriptionEnabled || _participantIds.Count > 0))" OnClick="ToggleTranscription">
                         @(_transcriptionEnabled ? "Stop transcription" : "Start transcription")
                     </HxButton>
                 }
@@ -242,7 +245,7 @@
 </section>
 
 @code {
-    private const string VoiceModulePath = "./js/voice-chat.js?v=20260906-5";
+    private const string VoiceModulePath = "./js/voice-chat.js?v=20260906-7";
 
     private static readonly TimeSpan RingTimeout = TimeSpan.FromSeconds(30);
     private readonly HashSet<string> _participantIds = [];
@@ -264,6 +267,7 @@
     private long _debugRequestVersion;
     private bool _audioOutputSelectionSupported;
     private bool _usesAudioSessionOutputModes;
+    private bool _screenSharingSupported;
     private bool _liveTranscriptionSupported;
     private bool _transcriptionEnabled;
     private string? _error;
@@ -369,6 +373,14 @@
             _usesAudioSessionOutputModes = await _module.InvokeAsync<bool>("usesAudioSessionOutputModes");
             try
             {
+                _screenSharingSupported = await _module.InvokeAsync<bool>("supportsScreenSharing");
+            }
+            catch (JSException)
+            {
+                _screenSharingSupported = false;
+            }
+            try
+            {
                 _liveTranscriptionSupported = await _module.InvokeAsync<bool>("supportsLiveTranscription");
                 if (_liveTranscriptionSupported)
                 {
@@ -442,7 +454,7 @@
 
     private async Task ToggleScreenSharing()
     {
-        if (_module == null) return;
+        if (_module == null || (!_screenSharingSupported && !_screenSharing)) return;
 
         _busy = true;
         try
@@ -474,6 +486,11 @@
     private async Task ToggleTranscription()
     {
         if (_module == null) return;
+        if (!_transcriptionEnabled && _participantIds.Count == 0)
+        {
+            _transcriptionStatus = "Connect to another participant to start transcription.";
+            return;
+        }
 
         _busy = true;
         try
@@ -963,6 +980,17 @@
     }
 
     [JSInvokable]
+    public Task TranscriptionStopped(string status)
+    {
+        return InvokeAsync(() =>
+        {
+            _transcriptionEnabled = false;
+            _transcriptionStatus = status;
+            StateHasChanged();
+        });
+    }
+
+    [JSInvokable]
     public Task VideoQualityAdapted(string quality)
     {
         return InvokeAsync(() =>
@@ -1089,6 +1117,7 @@
         _showDebug = false;
         _audioOutputSelectionSupported = false;
         _usesAudioSessionOutputModes = false;
+        _screenSharingSupported = false;
         _liveTranscriptionSupported = false;
         _transcriptionEnabled = false;
         _transcriptionStatus = null;

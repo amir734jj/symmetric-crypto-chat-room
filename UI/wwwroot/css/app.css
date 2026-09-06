@@ -95,6 +95,12 @@ pre {
     max-width: min(26rem, 65vw);
 }
 
+.voice-transcription-model {
+    flex: 1 0 100%;
+    justify-content: flex-end;
+    white-space: normal;
+}
+
 .voice-output-note {
     align-self: center;
     flex-basis: 100%;
@@ -302,8 +308,8 @@ pre {
 
     .voice-transcription-model {
         align-items: stretch;
-        flex-basis: 100%;
         flex-direction: column;
+        justify-content: flex-start;
         white-space: normal;
     }
 

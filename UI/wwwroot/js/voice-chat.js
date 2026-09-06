@@ -217,6 +217,10 @@ export function setMuted(muted) {
     }
 }
 
+export function supportsScreenSharing() {
+    return typeof navigator.mediaDevices?.getDisplayMedia === "function";
+}
+
 async function ensureLocalAudio() {
     if (!localStream) throw new Error("Join the media bridge before connecting audio");
     const liveTrack = localStream.getAudioTracks().find(track => track.readyState === "live");
@@ -254,6 +258,12 @@ async function ensureLocalAudio() {
 function stopLocalAudioIfAlone() {
     if (!localStream || peers.size > 0) return;
 
+    if (transcriptionEnabled) {
+        stopTranscription();
+        dotNetReference?.invokeMethodAsync(
+            "TranscriptionStopped",
+            "Transcription stopped because no other participant is connected.").catch(() => {});
+    }
     localAudioRequestId++;
     disconnectTranscriptionStream("local");
     for (const track of localStream.getAudioTracks()) {
@@ -323,7 +333,7 @@ export async function setScreenSharing(enabled) {
     if (enabled) {
         if (screenTrack?.readyState === "live") return true;
         if (screenShareStarting) throw new Error("Screen sharing is already starting");
-        if (!navigator.mediaDevices.getDisplayMedia) {
+        if (!supportsScreenSharing()) {
             throw new Error("Screen sharing is not supported by this browser");
         }
 
