@@ -286,7 +286,10 @@ public sealed class SignalRStateManager : AuthenticationStateProvider, IDisposab
     public async Task Status(MessageTypeEnum messageTypeEnum, List<OnlineUser> users)
     {
         _state.OnlineUsers = users;
-        _state.Names = users.Select(user => user.Name).ToList();
+        _state.Names = users
+            .Select(user => user.Name)
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToList();
 
         if (PresenceChanged != null)
         {

@@ -1,7 +1,11 @@
 let dotNetReference;
 let remoteMediaContainer;
 let localVideoElement;
+let focusedVideoTile;
 let localStream;
+let localAudioPromise;
+let localAudioRequestId = 0;
+let audioMuted = false;
 let cameraTrack;
 let screenTrack;
 let restoreCameraAfterScreenShare = false;
@@ -39,6 +43,7 @@ const liveDataRateSamples = new Map();
 const transcriptionSources = new Map();
 const transcriptionSampleRate = 16000;
 const transcriptionWindowSamples = transcriptionSampleRate * 6;
+const transcriptionModels = new Set(["default", "base", "small"]);
 const audioQualityProfiles = {
     low: { sampleRate: 16000, maxBitrate: 16000 },
     standard: { sampleRate: 32000, maxBitrate: 32000 },
@@ -92,13 +97,7 @@ export async function initialize(
         ]
     };
 
-    localStream = await navigator.mediaDevices.getUserMedia({
-        audio: getAudioConstraints(),
-        video: false
-    });
-    if ("audioSession" in navigator) {
-        setAudioOutputMode("auto");
-    }
+    localStream = new MediaStream();
     document.removeEventListener("visibilitychange", handleVisibilityChange);
     document.addEventListener("visibilitychange", handleVisibilityChange);
     await requestScreenWakeLock();
@@ -141,6 +140,8 @@ function parseSessionDescription(messageJson) {
 }
 
 export async function connectToParticipants(participants) {
+    if (participants.length > 0) await ensureLocalAudio();
+
     for (const participant of participants) {
         const peer = await createPeer(participant.connectionId, participant.name);
         await negotiatePeer(participant.connectionId, peer);
@@ -159,7 +160,10 @@ export async function receiveOffer(senderConnectionId, senderName, offerJson) {
         throw error;
     }
 
+    await ensureLocalAudio();
+
     const peer = await createPeer(senderConnectionId, senderName);
+    await ensurePeerAudioSender(peer, senderConnectionId);
     const offerCollision = peer.makingOffer || peer.connection.signalingState !== "stable";
     peer.ignoreOffer = !peer.polite && offerCollision;
     if (peer.ignoreOffer) return;
@@ -199,10 +203,58 @@ export async function receiveIceCandidate(senderConnectionId, candidateJson) {
 }
 
 export function setMuted(muted) {
+    audioMuted = muted;
     if (!localStream) return;
     for (const track of localStream.getAudioTracks()) {
         track.enabled = !muted;
     }
+}
+
+async function ensureLocalAudio() {
+    if (!localStream) throw new Error("Join the media bridge before connecting audio");
+    const liveTrack = localStream.getAudioTracks().find(track => track.readyState === "live");
+    if (liveTrack) return liveTrack;
+    if (localAudioPromise) return localAudioPromise;
+
+    const targetStream = localStream;
+    const requestId = ++localAudioRequestId;
+    const pendingAudio = navigator.mediaDevices.getUserMedia({
+        audio: getAudioConstraints(),
+        video: false
+    }).then(stream => {
+        const audioTrack = stream.getAudioTracks()[0];
+        if (!audioTrack) throw new Error("No microphone is available");
+        if (localStream !== targetStream || requestId !== localAudioRequestId) {
+            stream.getTracks().forEach(track => track.stop());
+            throw new Error("The participant left before audio connected");
+        }
+
+        audioTrack.enabled = !audioMuted;
+        targetStream.addTrack(audioTrack);
+        if ("audioSession" in navigator) setAudioOutputMode("auto");
+        if (transcriptionEnabled) {
+            disconnectTranscriptionStream("local");
+            connectTranscriptionStream("local", targetStream);
+        }
+        return audioTrack;
+    }).finally(() => {
+        if (localAudioPromise === pendingAudio) localAudioPromise = undefined;
+    });
+    localAudioPromise = pendingAudio;
+    return pendingAudio;
+}
+
+function stopLocalAudioIfAlone() {
+    if (!localStream || peers.size > 0) return;
+
+    localAudioRequestId++;
+    disconnectTranscriptionStream("local");
+    for (const track of localStream.getAudioTracks()) {
+        localStream.removeTrack(track);
+        track.stop();
+    }
+    stopProximityRouting();
+    setAudioSessionType("auto");
 }
 
 export async function setVideoEnabled(enabled) {
@@ -244,6 +296,7 @@ export async function setVideoEnabled(enabled) {
     localStream.removeTrack(currentTrack);
     cameraTrack = undefined;
     currentTrack.stop();
+    clearVideoFocusForElement(localVideoElement);
     localVideoElement.srcObject = null;
     localVideoElement.hidden = true;
 
@@ -333,6 +386,7 @@ async function stopScreenSharing(notifyBrowserStop = false) {
         localStream.addTrack(restoredCamera);
         await showLocalVideo(restoredCamera);
     } else if (localVideoElement) {
+        clearVideoFocusForElement(localVideoElement);
         localVideoElement.srcObject = null;
         localVideoElement.hidden = true;
     }
@@ -370,12 +424,47 @@ async function showLocalVideo(videoTrack) {
     try {
         await localVideoElement.play();
     } catch (error) {
+        clearVideoFocusForElement(localVideoElement);
         localVideoElement.srcObject = null;
         localVideoElement.hidden = true;
         videoTrack.stop();
         const message = error instanceof Error ? error.message : String(error);
         throw new Error(`Unable to start the camera preview: ${message}`);
     }
+}
+
+export function toggleVideoFocus(tile) {
+    if (!tile || tile.hidden) return;
+
+    setFocusedVideoTile(focusedVideoTile === tile ? undefined : tile);
+}
+
+function setFocusedVideoTile(tile) {
+    if (focusedVideoTile) {
+        focusedVideoTile.classList.remove("voice-video-focused");
+        updateFocusButton(focusedVideoTile, false);
+    }
+
+    focusedVideoTile = tile;
+    if (focusedVideoTile) {
+        focusedVideoTile.classList.add("voice-video-focused");
+        updateFocusButton(focusedVideoTile, true);
+        focusedVideoTile.scrollIntoView({ behavior: "smooth", block: "nearest" });
+    }
+}
+
+function updateFocusButton(tile, focused) {
+    const button = tile.querySelector(".voice-video-focus");
+    if (!button) return;
+
+    button.title = focused ? "Restore video size" : "Focus video";
+    button.setAttribute("aria-label", focused ? "Restore video size" : "Focus video");
+    button.setAttribute("aria-pressed", String(focused));
+}
+
+function clearVideoFocusForElement(video) {
+    const tile = video?.closest(".voice-video-tile");
+    if (focusedVideoTile === tile) setFocusedVideoTile(undefined);
 }
 
 export function supportsAudioOutputSelection() {
@@ -390,24 +479,29 @@ export function supportsLiveTranscription() {
     return Boolean(window.AudioContext || window.webkitAudioContext) && "Worker" in window;
 }
 
-export async function setTranscriptionEnabled(enabled) {
+export async function setTranscriptionEnabled(enabled, selectedModel = "default") {
     if (enabled) {
         if (transcriptionEnabled) return true;
-        if (!localStream) throw new Error("Join the media bridge before starting transcription");
+        if (!localStream?.getAudioTracks().some(track => track.readyState === "live")) {
+            throw new Error("Connect to another participant before starting transcription");
+        }
         if (!supportsLiveTranscription()) {
             throw new Error("Live transcription is not supported by this browser");
         }
 
         transcriptionEnabled = true;
         transcriptionWorker = new Worker(
-            new URL("./transcription-worker.js?version=whisper-tiny-v1", import.meta.url),
+            new URL("./transcription-worker.js?version=whisper-model-selector-v1", import.meta.url),
             { type: "module" });
         transcriptionWorker.onmessage = handleTranscriptionWorkerMessage;
         transcriptionWorker.onerror = event => {
             notifyTranscriptionStatus(`Transcription stopped: ${event.message || "worker error"}`, true);
             stopTranscription();
         };
-        transcriptionWorker.postMessage({ type: "initialize" });
+        transcriptionWorker.postMessage({
+            type: "initialize",
+            model: normalizeTranscriptionModel(selectedModel)
+        });
 
         const AudioContextType = window.AudioContext || window.webkitAudioContext;
         transcriptionContext = new AudioContextType();
@@ -817,17 +911,23 @@ function delay(milliseconds) {
 
 export function removeParticipant(connectionId) {
     const peer = peers.get(connectionId);
-    if (!peer) return;
+    if (!peer) {
+        stopLocalAudioIfAlone();
+        return;
+    }
 
+    if (focusedVideoTile === peer.tile) setFocusedVideoTile(undefined);
     peer.connection.close();
     disconnectTranscriptionStream(connectionId);
     peer.audio.remove();
     peer.tile.remove();
     liveDataRateSamples.delete(connectionId);
     peers.delete(connectionId);
+    stopLocalAudioIfAlone();
 }
 
 export function leave() {
+    setFocusedVideoTile(undefined);
     stopTranscription();
     clearInterval(adaptationTimer);
     adaptationTimer = undefined;
@@ -853,11 +953,15 @@ export function leave() {
     if (screenTrack && !localStream?.getTracks().includes(screenTrack)) screenTrack.stop();
 
     localStream = undefined;
+    localAudioPromise = undefined;
+    localAudioRequestId++;
+    audioMuted = false;
     cameraTrack = undefined;
     screenTrack = undefined;
     restoreCameraAfterScreenShare = false;
     screenShareStarting = false;
     if (localVideoElement) {
+        clearVideoFocusForElement(localVideoElement);
         localVideoElement.srcObject = null;
         localVideoElement.hidden = true;
     }
@@ -973,6 +1077,16 @@ async function createPeer(connectionId, participantName) {
     tile.className = "voice-video-tile";
     tile.hidden = true;
 
+    const focusButton = document.createElement("button");
+    focusButton.type = "button";
+    focusButton.className = "voice-video-focus";
+    focusButton.title = "Focus video";
+    focusButton.setAttribute("aria-label", `Focus ${participantName || "participant"} video`);
+    focusButton.setAttribute("aria-pressed", "false");
+    focusButton.innerHTML = "<span aria-hidden=\"true\">&#x26F6;</span>";
+    focusButton.addEventListener("click", () => toggleVideoFocus(tile));
+    tile.appendChild(focusButton);
+
     const video = document.createElement("video");
     video.autoplay = true;
     video.playsInline = true;
@@ -1025,6 +1139,7 @@ async function createPeer(connectionId, participantName) {
             const updateVideoVisibility = () => {
                 tile.hidden = mediaStream.getVideoTracks()
                     .every(track => track.muted || track.readyState === "ended");
+                if (tile.hidden && focusedVideoTile === tile) setFocusedVideoTile(undefined);
             };
             event.track.addEventListener("mute", updateVideoVisibility);
             event.track.addEventListener("unmute", updateVideoVisibility);
@@ -1070,6 +1185,14 @@ function addLocalTrack(peer, track, remoteConnectionId) {
     }
     setReceiverTransform(transceiver.receiver, remoteConnectionId, track.kind);
     return sender;
+}
+
+async function ensurePeerAudioSender(peer, remoteConnectionId) {
+    const audioTrack = localStream?.getAudioTracks().find(track => track.readyState === "live");
+    if (!audioTrack || peer.connection.getSenders().some(sender => sender.track?.kind === "audio")) return;
+
+    const sender = addLocalTrack(peer, audioTrack, remoteConnectionId);
+    await applySenderAudioQuality(sender);
 }
 
 function preferVp8(transceiver) {
@@ -1384,4 +1507,8 @@ async function setEffectiveVideoQuality(selectedVideoQuality) {
 
 function notifyVideoQualityChanged() {
     dotNetReference?.invokeMethodAsync("VideoQualityAdapted", videoQuality).catch(() => {});
+}
+
+function normalizeTranscriptionModel(model) {
+    return transcriptionModels.has(model) ? model : "default";
 }

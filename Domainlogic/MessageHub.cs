@@ -146,7 +146,9 @@ namespace DomainLogic
 
             var participants = VoiceUsers.Keys
                 .Where(connectionId => connectionId != Context.ConnectionId)
-                .Where(connectionId => Users.TryGetValue(connectionId, out var peer) && peer.Channel == userInfo.Channel)
+                .Where(connectionId => Users.TryGetValue(connectionId, out var peer) &&
+                    peer.Channel == userInfo.Channel &&
+                    !string.Equals(peer.Name, userInfo.Name, StringComparison.OrdinalIgnoreCase))
                 .Select(connectionId => new VoiceParticipant
                 {
                     ConnectionId = connectionId,
@@ -194,7 +196,8 @@ namespace DomainLogic
             var caller = GetCurrentUser();
             var target = GetUserInSameChannel(targetConnectionId, caller.Channel);
             Debug.Assert(target.Channel == caller.Channel);
-            if (targetConnectionId == Context.ConnectionId)
+            if (targetConnectionId == Context.ConnectionId ||
+                string.Equals(target.Name, caller.Name, StringComparison.OrdinalIgnoreCase))
             {
                 throw new HubException("Cannot ring the current user");
             }
@@ -284,7 +287,8 @@ namespace DomainLogic
             if (!VoiceUsers.ContainsKey(Context.ConnectionId) ||
                 !VoiceUsers.ContainsKey(targetConnectionId) ||
                 !Users.TryGetValue(targetConnectionId, out var target) ||
-                target.Channel != userInfo.Channel)
+                target.Channel != userInfo.Channel ||
+                string.Equals(target.Name, userInfo.Name, StringComparison.OrdinalIgnoreCase))
             {
                 throw new HubException("Voice peer is not in the same channel");
             }

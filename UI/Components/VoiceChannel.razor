@@ -84,6 +84,14 @@
                 </HxButton>
                 @if (_liveTranscriptionSupported)
                 {
+                    <label class="voice-quality">
+                        <span>Transcription model</span>
+                        <select class="form-select form-select-sm" @bind="_transcriptionModel" disabled="@(_busy || _transcriptionEnabled)">
+                            <option value="default">Default (Whisper Tiny)</option>
+                            <option value="base">Whisper Base</option>
+                            <option value="small">Whisper Small</option>
+                        </select>
+                    </label>
                     <HxButton Color="ThemeColor.Secondary" Enabled="@(!_busy)" OnClick="ToggleTranscription">
                         @(_transcriptionEnabled ? "Stop transcription" : "Start transcription")
                     </HxButton>
@@ -214,7 +222,10 @@
     }
 
     <div class="voice-video-grid mt-3">
-        <figure class="voice-video-tile" hidden="@(!_videoEnabled)">
+        <figure class="voice-video-tile" @ref="_localVideoTile" hidden="@(!_videoEnabled)">
+            <button type="button" class="voice-video-focus" title="Focus video" aria-label="Focus your video" aria-pressed="false" @onclick="ToggleLocalVideoFocus">
+                <span aria-hidden="true">&#x26F6;</span>
+            </button>
             <video @ref="_localVideo" class="voice-video voice-video-local" autoplay muted playsinline aria-label="@(_screenSharing ? "Your shared screen preview" : "Your camera preview")"></video>
             <figcaption>@(_screenSharing ? "Shared screen" : State.UserInfo?.Name ?? "You") <span>(You)</span></figcaption>
         </figure>
@@ -227,7 +238,7 @@
 </section>
 
 @code {
-    private const string VoiceModulePath = "./js/voice-chat.js?v=20260906-1";
+    private const string VoiceModulePath = "./js/voice-chat.js?v=20260906-4";
 
     private static readonly TimeSpan RingTimeout = TimeSpan.FromSeconds(30);
     private readonly HashSet<string> _participantIds = [];
@@ -236,6 +247,7 @@
     private IJSObjectReference? _module;
     private ElementReference _remoteMediaContainer;
     private ElementReference _localVideo;
+    private ElementReference _localVideoTile;
     private ElementReference _ringtone;
     private bool _joined;
     private bool _muted;
@@ -269,10 +281,12 @@
     private string _videoQuality = "auto";
     private string _effectiveVideoQuality = "standard";
     private string _audioOutputMode = "auto";
+    private string _transcriptionModel = "default";
     private TurnHealthStatus? _turnHealth;
 
     private IEnumerable<OnlineUser> OtherOnlineUsers => State.OnlineUsers
-        .Where(user => user.ConnectionId != SignalRStateManager.ConnectionId);
+        .Where(user => user.ConnectionId != SignalRStateManager.ConnectionId)
+        .Where(user => !string.Equals(user.Name, State.UserInfo?.Name, StringComparison.OrdinalIgnoreCase));
 
     private ThemeColor TurnHealthColor => _turnHealth switch
     {
@@ -410,6 +424,13 @@
         }
     }
 
+    private async Task ToggleLocalVideoFocus()
+    {
+        if (_module == null) return;
+
+        await _module.InvokeVoidAsync("toggleVideoFocus", _localVideoTile);
+    }
+
     private async Task ToggleScreenSharing()
     {
         if (_module == null) return;
@@ -450,7 +471,8 @@
         {
             _transcriptionEnabled = await _module.InvokeAsync<bool>(
                 "setTranscriptionEnabled",
-                !_transcriptionEnabled);
+                !_transcriptionEnabled,
+                _transcriptionModel);
             _transcriptionStatus = _transcriptionEnabled
                 ? "Preparing on-device transcription model..."
                 : null;
