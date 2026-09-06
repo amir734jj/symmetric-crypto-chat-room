@@ -170,8 +170,6 @@
 </section>
 
 @code {
-    private const string VoiceModulePath = "./js/voice-chat.js?v=20260905-5";
-
     private static readonly TimeSpan RingTimeout = TimeSpan.FromSeconds(30);
     private readonly HashSet<string> _participantIds = [];
     private DotNetObjectReference<VoiceChannel>? _reference;
@@ -232,12 +230,6 @@
         SignalRStateManager.VoiceCallRespondedEvent += VoiceCallResponded;
         SignalRStateManager.ConnectionReconnected += ConnectionReconnected;
         SignalRStateManager.PresenceChanged += PresenceChanged;
-
-        if (SignalRStateManager.PendingVoiceCall is { } pendingCall)
-        {
-            _incomingCallerConnectionId = pendingCall.CallerConnectionId;
-            _incomingCallerName = pendingCall.CallerName;
-        }
     }
 
     private Task PresenceChanged()
@@ -264,7 +256,7 @@
 
         try
         {
-            _module ??= await Js.InvokeAsync<IJSObjectReference>("import", VoiceModulePath);
+            _module ??= await Js.InvokeAsync<IJSObjectReference>("import", "./js/voice-chat.js");
             _reference ??= DotNetObjectReference.Create(this);
 
             var turnCredentials = await SignalRStateManager.GetTurnCredentials();
@@ -373,11 +365,11 @@
 
         try
         {
-            var targetConnectionId = await SignalRStateManager.RingVoice(user.ClientInstanceId);
-            _outgoingCallConnectionId = targetConnectionId;
+            await SignalRStateManager.RingVoice(user.ConnectionId);
+            _outgoingCallConnectionId = user.ConnectionId;
             _outgoingCallName = user.Name;
             _callStatus = $"Ringing {user.Name}... (30 seconds)";
-            StartOutgoingCallTimeout(targetConnectionId, user.Name);
+            StartOutgoingCallTimeout(user.ConnectionId, user.Name);
         }
         catch (Exception exception)
         {
@@ -533,34 +525,18 @@
     private async Task ClearIncomingCall()
     {
         await StopRingtone();
-        if (_incomingCallerConnectionId != null)
-        {
-            SignalRStateManager.ClearPendingVoiceCall(_incomingCallerConnectionId);
-        }
         _incomingCallerConnectionId = null;
         _incomingCallerName = null;
     }
 
     private async Task PlayRingtone()
     {
-        try
-        {
-            await Js.InvokeVoidAsync("playAudio", _ringtone);
-        }
-        catch (JSException)
-        {
-        }
+        await Js.InvokeVoidAsync("playAudio", _ringtone);
     }
 
     private async Task StopRingtone()
     {
-        try
-        {
-            await Js.InvokeVoidAsync("stopAudio", _ringtone);
-        }
-        catch (JSException)
-        {
-        }
+        await Js.InvokeVoidAsync("stopAudio", _ringtone);
     }
 
     private async Task CheckTurnHealth()
@@ -600,16 +576,8 @@
         return InvokeAsync(async () =>
         {
             if (!_joined || _module == null) return;
-            try
-            {
-                _participantIds.Add(senderConnectionId);
-                await _module.InvokeVoidAsync("receiveOffer", senderConnectionId, offer);
-            }
-            catch (Exception exception)
-            {
-                _participantIds.Remove(senderConnectionId);
-                _error = $"Unable to connect voice participant: {exception.Message}";
-            }
+            _participantIds.Add(senderConnectionId);
+            await _module.InvokeVoidAsync("receiveOffer", senderConnectionId, offer);
             StateHasChanged();
         });
     }
@@ -620,15 +588,7 @@
         {
             if (_module != null)
             {
-                try
-                {
-                    await _module.InvokeVoidAsync("receiveAnswer", senderConnectionId, answer);
-                }
-                catch (Exception exception)
-                {
-                    _error = $"Unable to process voice answer: {exception.Message}";
-                    StateHasChanged();
-                }
+                await _module.InvokeVoidAsync("receiveAnswer", senderConnectionId, answer);
             }
         });
     }
@@ -639,15 +599,7 @@
         {
             if (_module != null)
             {
-                try
-                {
-                    await _module.InvokeVoidAsync("receiveIceCandidate", senderConnectionId, candidate);
-                }
-                catch (Exception exception)
-                {
-                    _error = $"Unable to process voice network update: {exception.Message}";
-                    StateHasChanged();
-                }
+                await _module.InvokeVoidAsync("receiveIceCandidate", senderConnectionId, candidate);
             }
         });
     }
@@ -707,13 +659,7 @@
     {
         if (_module != null)
         {
-            try
-            {
-                await _module.InvokeVoidAsync("leave");
-            }
-            catch (Exception)
-            {
-            }
+            await _module.InvokeVoidAsync("leave");
         }
 
         _participantIds.Clear();

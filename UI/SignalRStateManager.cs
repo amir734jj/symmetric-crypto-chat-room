@@ -14,8 +14,6 @@ namespace UI;
 
 public sealed class SignalRStateManager : AuthenticationStateProvider, IDisposable, ITypedClient
 {
-    private const string VoiceModulePath = "./js/voice-chat.js?v=20260905-5";
-
     public event Func<string, string, Task>? VoiceOfferReceived;
     public event Func<string, string, Task>? VoiceAnswerReceived;
     public event Func<string, string, Task>? VoiceIceCandidateReceived;
@@ -36,10 +34,6 @@ public sealed class SignalRStateManager : AuthenticationStateProvider, IDisposab
 
     private readonly ILogger<SignalRStateManager> _logger;
 
-    private readonly IJSRuntime _jsRuntime;
-
-    private IJSObjectReference? _voiceModule;
-
     // ReSharper disable once InconsistentNaming
     private const string SESSION_KEY = "SYMMETRIC_CRYPTO_SESSION_KEY";
 
@@ -48,9 +42,7 @@ public sealed class SignalRStateManager : AuthenticationStateProvider, IDisposab
     private readonly State _state;
     private readonly ITypedServer _server;
     private readonly HubConnection _hubConnection;
-    private string _clientInstanceId;
-
-    public (string CallerConnectionId, string CallerName)? PendingVoiceCall { get; private set; }
+    private readonly string _clientInstanceId;
 
     public SignalRStateManager(
         HubConnection hubConnection,
@@ -58,14 +50,12 @@ public sealed class SignalRStateManager : AuthenticationStateProvider, IDisposab
         ISyncSessionStorageService sessionStorageService,
         PayloadEncryptionService payloadEncryptionService,
         NavigationManager navigation,
-        IJSRuntime jsRuntime,
         ILogger<SignalRStateManager> logger)
     {
         _hubConnection = hubConnection;
         _sessionStorageService = sessionStorageService;
         _payloadEncryptionService = payloadEncryptionService;
         _navigation = navigation;
-        _jsRuntime = jsRuntime;
         _logger = logger;
         _state = state;
         _clientInstanceId = sessionStorageService.ContainKey(CLIENT_INSTANCE_ID_KEY)
@@ -123,28 +113,9 @@ public sealed class SignalRStateManager : AuthenticationStateProvider, IDisposab
             
             _state.StateEnum = SignalRStateEnum.Initialized;
 
-            LoginViewModel? savedLogin = _sessionStorageService.ContainKey(SESSION_KEY)
-                ? _sessionStorageService.GetItem<LoginViewModel>(SESSION_KEY)
-                : null;
-            if (savedLogin == null)
+            if (_sessionStorageService.ContainKey(SESSION_KEY))
             {
-                var nativeSession = await RestoreBackgroundSession();
-                if (nativeSession != null)
-                {
-                    savedLogin = new LoginViewModel
-                    {
-                        Channel = nativeSession.Channel,
-                        Name = nativeSession.Name,
-                        Password = nativeSession.Password
-                    };
-                    _clientInstanceId = nativeSession.ClientInstanceId;
-                    _sessionStorageService.SetItem(CLIENT_INSTANCE_ID_KEY, _clientInstanceId);
-                }
-            }
-
-            if (savedLogin != null)
-            {
-                await Login(savedLogin);
+                await Login(_sessionStorageService.GetItem<LoginViewModel>(SESSION_KEY));
                 
                 _navigation.NavigateTo("/Chat");
             }
@@ -174,25 +145,6 @@ public sealed class SignalRStateManager : AuthenticationStateProvider, IDisposab
         _sessionStorageService.SetItem(SESSION_KEY, login);
         
         await _server.Join(login.Channel, login.Name, _clientInstanceId);
-
-        try
-        {
-            _voiceModule ??= await _jsRuntime.InvokeAsync<IJSObjectReference>("import", VoiceModulePath);
-            var notificationsEnabled = await _voiceModule.InvokeAsync<bool>(
-                "registerBackgroundCalls",
-                login.Channel,
-                login.Name,
-                login.Password,
-                _clientInstanceId);
-            if (!notificationsEnabled)
-            {
-                _logger.LogWarning("Background calls are enabled, but incoming call notifications are disabled");
-            }
-        }
-        catch (Exception exception)
-        {
-            _logger.LogWarning(exception, "Unable to register Android background calls");
-        }
         
         NotifyAuthenticationStateChanged(GetAuthenticationStateAsync());
     }
@@ -204,16 +156,6 @@ public sealed class SignalRStateManager : AuthenticationStateProvider, IDisposab
 
     public async Task Logout()
     {
-        try
-        {
-            _voiceModule ??= await _jsRuntime.InvokeAsync<IJSObjectReference>("import", VoiceModulePath);
-            await _voiceModule.InvokeVoidAsync("unregisterBackgroundCalls");
-        }
-        catch (Exception exception)
-        {
-            _logger.LogWarning(exception, "Unable to unregister Android background calls");
-        }
-
         if (_hubConnection.State == HubConnectionState.Connected)
         {
             await _server.Leave();
@@ -225,7 +167,6 @@ public sealed class SignalRStateManager : AuthenticationStateProvider, IDisposab
         _state.Messages.Clear();
         
         _sessionStorageService.RemoveItem(SESSION_KEY);
-        PendingVoiceCall = null;
 
         NotifyAuthenticationStateChanged(GetAuthenticationStateAsync());
     }
@@ -263,9 +204,9 @@ public sealed class SignalRStateManager : AuthenticationStateProvider, IDisposab
         return _server.CheckTurnHealth();
     }
 
-    public Task<string> RingVoice(string targetClientInstanceId)
+    public Task RingVoice(string targetConnectionId)
     {
-        return _server.RingVoice(targetClientInstanceId);
+        return _server.RingVoice(targetConnectionId);
     }
 
     public Task CancelVoiceCall(string targetConnectionId, bool timedOut = false)
@@ -355,13 +296,11 @@ public sealed class SignalRStateManager : AuthenticationStateProvider, IDisposab
 
     public Task VoiceCallReceived(string callerConnectionId, string callerName)
     {
-        PendingVoiceCall = (callerConnectionId, callerName);
         return VoiceCallReceivedEvent?.Invoke(callerConnectionId, callerName) ?? Task.CompletedTask;
     }
 
     public Task VoiceCallCancelled(string callerConnectionId, bool timedOut)
     {
-        ClearPendingVoiceCall(callerConnectionId);
         return VoiceCallCancelledEvent?.Invoke(callerConnectionId, timedOut) ?? Task.CompletedTask;
     }
 
@@ -388,38 +327,5 @@ public sealed class SignalRStateManager : AuthenticationStateProvider, IDisposab
     public Task ReceiveVoiceIceCandidate(string senderConnectionId, string candidate)
     {
         return VoiceIceCandidateReceived?.Invoke(senderConnectionId, candidate) ?? Task.CompletedTask;
-    }
-
-    public void ClearPendingVoiceCall(string callerConnectionId)
-    {
-        if (PendingVoiceCall?.CallerConnectionId == callerConnectionId)
-        {
-            PendingVoiceCall = null;
-        }
-    }
-
-    private async Task<NativeBackgroundSession?> RestoreBackgroundSession()
-    {
-        try
-        {
-            _voiceModule ??= await _jsRuntime.InvokeAsync<IJSObjectReference>("import", VoiceModulePath);
-            return await _voiceModule.InvokeAsync<NativeBackgroundSession?>("restoreBackgroundSession");
-        }
-        catch (Exception exception)
-        {
-            _logger.LogWarning(exception, "Unable to restore the Android background call session");
-            return null;
-        }
-    }
-
-    private sealed class NativeBackgroundSession
-    {
-        public string Channel { get; set; } = string.Empty;
-
-        public string Name { get; set; } = string.Empty;
-
-        public string Password { get; set; } = string.Empty;
-
-        public string ClientInstanceId { get; set; } = string.Empty;
     }
 }

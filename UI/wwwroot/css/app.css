@@ -143,76 +143,7 @@ pre {
     white-space: pre-wrap;
 }
 
-.app-debug-button {
-    align-items: center;
-    background: #202824;
-    border: 1px solid #46534c;
-    border-radius: 50%;
-    bottom: 1rem;
-    box-shadow: 0 3px 12px rgba(0, 0, 0, 0.28);
-    color: white;
-    display: flex;
-    font-size: 1.15rem;
-    height: 2.75rem;
-    justify-content: center;
-    position: fixed;
-    right: 1rem;
-    text-decoration: none;
-    width: 2.75rem;
-    z-index: 900;
-}
-
-.app-debug-button:hover,
-.app-debug-button:focus {
-    background: #36443d;
-    color: white;
-}
-
-.app-debug-page {
-    margin: 1rem auto 5rem;
-    max-width: 72rem;
-}
-
-.app-debug-header,
-.app-debug-actions {
-    align-items: center;
-    display: flex;
-    gap: 0.75rem;
-    justify-content: space-between;
-}
-
-.app-debug-header p {
-    margin-bottom: 0;
-}
-
-.app-debug-actions {
-    justify-content: flex-start;
-    margin: 1rem 0;
-}
-
-.app-debug-report {
-    background: #17211c;
-    border: 1px solid #35423b;
-    border-radius: 4px;
-    color: #e3eee8;
-    max-height: 70vh;
-    min-height: 18rem;
-    overflow: auto;
-    padding: 1rem;
-    white-space: pre-wrap;
-    word-break: break-word;
-}
-
 @media (max-width: 575px) {
-    .app-debug-header {
-        align-items: flex-start;
-        flex-direction: column;
-    }
-
-    .app-debug-actions {
-        flex-wrap: wrap;
-    }
-
     .voice-channel-header {
         align-items: stretch;
         flex-direction: column;

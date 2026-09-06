@@ -24,9 +24,7 @@ const audioQualityProfiles = {
 };
 
 export async function initialize(reference, container, turnCredentials, passwordDerivedKey, selectedAudioQuality) {
-    window.appDiagnostics?.record("Voice", "initialize started");
     if (!("RTCRtpScriptTransform" in window)) {
-        window.appDiagnostics?.record("Voice", "encrypted WebRTC unsupported");
         throw new Error("This browser does not support password-encrypted WebRTC audio");
     }
 
@@ -54,31 +52,18 @@ export async function initialize(reference, container, turnCredentials, password
         ]
     };
 
-    const nativeAudioRouter = getNativeAudioRouter();
-    window.appDiagnostics?.record("Voice", "requesting microphone permission");
-    try {
-        localStream = await navigator.mediaDevices.getUserMedia({
-            audio: nativeAudioRouter ? true : getAudioConstraints(),
-            video: false
-        });
-    } catch (error) {
-        window.appDiagnostics?.record("Voice", "microphone request failed", error?.message || error);
-        throw error;
-    }
-    window.appDiagnostics?.record("Voice", "microphone stream acquired");
-    if (!nativeAudioRouter && "audioSession" in navigator) {
-        try {
-            await setAudioOutputMode("auto");
-        } catch (error) {
-            console.warn("Unable to set the initial audio output mode", error);
-        }
+    localStream = await navigator.mediaDevices.getUserMedia({
+        audio: getAudioConstraints(),
+        video: false
+    });
+    if ("audioSession" in navigator) {
+        setAudioOutputMode("auto");
     }
     document.removeEventListener("visibilitychange", handleVisibilityChange);
     document.addEventListener("visibilitychange", handleVisibilityChange);
     await requestScreenWakeLock();
     startQualityAdaptation();
     notifyAudioQualityChanged();
-    window.appDiagnostics?.record("Voice", "initialize completed");
 }
 
 export async function connectToParticipants(connectionIds) {
@@ -94,15 +79,8 @@ export async function connectToParticipants(connectionIds) {
 }
 
 export async function receiveOffer(senderConnectionId, offerJson) {
-    let offer;
-    try {
-        offer = JSON.parse(offerJson);
-    } catch (error) {
-        console.warn("Ignoring an invalid voice offer", error);
-        return;
-    }
     const peer = await createPeer(senderConnectionId);
-    await peer.connection.setRemoteDescription(offer);
+    await peer.connection.setRemoteDescription(JSON.parse(offerJson));
     await addPendingCandidates(peer);
 
     const answer = await peer.connection.createAnswer();
@@ -117,23 +95,13 @@ export async function receiveAnswer(senderConnectionId, answerJson) {
     const peer = peers.get(senderConnectionId);
     if (!peer) return;
 
-    try {
-        await peer.connection.setRemoteDescription(JSON.parse(answerJson));
-    } catch (error) {
-        console.warn("Ignoring an invalid voice answer", error);
-    }
+    await peer.connection.setRemoteDescription(JSON.parse(answerJson));
     await addPendingCandidates(peer);
 }
 
 export async function receiveIceCandidate(senderConnectionId, candidateJson) {
     const peer = await createPeer(senderConnectionId);
-    let candidate;
-    try {
-        candidate = JSON.parse(candidateJson);
-    } catch (error) {
-        console.warn("Ignoring an invalid voice ICE candidate", error);
-        return;
-    }
+    const candidate = JSON.parse(candidateJson);
 
     if (peer.connection.remoteDescription) {
         await peer.connection.addIceCandidate(candidate);
@@ -150,11 +118,11 @@ export function setMuted(muted) {
 }
 
 export function supportsAudioOutputSelection() {
-    return Boolean(getNativeAudioRouter()) || supportsAudioOutputDevicePicker() || "audioSession" in navigator;
+    return supportsAudioOutputDevicePicker() || "audioSession" in navigator;
 }
 
 export function usesAudioSessionOutputModes() {
-    return Boolean(getNativeAudioRouter()) || "audioSession" in navigator;
+    return "audioSession" in navigator;
 }
 
 export async function chooseAudioOutput() {
@@ -169,9 +137,8 @@ export async function chooseAudioOutput() {
     throw new Error("Audio output selection is not supported by this browser");
 }
 
-export async function setAudioOutputMode(selectedMode) {
-    const nativeAudioRouter = getNativeAudioRouter();
-    if (!nativeAudioRouter && !("audioSession" in navigator)) {
+export function setAudioOutputMode(selectedMode) {
+    if (!("audioSession" in navigator)) {
         throw new Error("Audio output modes are not supported by this browser");
     }
 
@@ -180,11 +147,6 @@ export async function setAudioOutputMode(selectedMode) {
         : "auto";
     stopProximityRouting();
     audioOutputMode = mode;
-
-    if (nativeAudioRouter) {
-        await nativeAudioRouter.setMode({ mode });
-        return mode;
-    }
 
     if (!applyAudioOutputMode(mode)) {
         throw new Error("The browser could not change the audio route");
@@ -202,10 +164,6 @@ function supportsAudioOutputDevicePicker() {
         typeof HTMLMediaElement.prototype.setSinkId === "function";
 }
 
-function getNativeAudioRouter() {
-    return window.Capacitor?.Plugins?.VoiceAudioRouter;
-}
-
 export async function setAudioQuality(selectedAudioQuality) {
     audioQualityMode = normalizeAudioQualityMode(selectedAudioQuality);
     goodNetworkSamples = 0;
@@ -219,7 +177,7 @@ async function setEffectiveAudioQuality(selectedAudioQuality) {
     const qualityChanged = audioQuality !== normalizedQuality;
     audioQuality = normalizedQuality;
 
-    if (localStream && !getNativeAudioRouter()) {
+    if (localStream) {
         const constraintResults = await Promise.allSettled(localStream.getAudioTracks()
             .map(track => track.applyConstraints(getAudioConstraints())));
         for (const result of constraintResults) {
@@ -244,16 +202,6 @@ async function setEffectiveAudioQuality(selectedAudioQuality) {
 }
 
 export async function getConnectionDiagnostics() {
-    const nativeAudioRouter = getNativeAudioRouter();
-    let nativeAudioRouting = { supported: false };
-    if (nativeAudioRouter) {
-        try {
-            nativeAudioRouting = await nativeAudioRouter.getCapabilities();
-        } catch (error) {
-            nativeAudioRouting = { supported: false, error: error.message };
-        }
-    }
-
     const peerDiagnostics = await Promise.all(
         [...peers.entries()].map(async ([connectionId, peer]) => {
             const stats = await peer.connection.getStats();
@@ -320,7 +268,6 @@ export async function getConnectionDiagnostics() {
             voiceIsolation: getConstraintStatus(supportedConstraints, audioSettings, "voiceIsolation")
         },
         mobileCallSupport: {
-            nativeAudioRouting,
             screenWakeLockSupported: "wakeLock" in navigator,
             screenWakeLockActive: Boolean(screenWakeLock && !screenWakeLock.released),
             communicationAudioSession: navigator.audioSession?.type ?? "unsupported",
@@ -346,7 +293,7 @@ export function removeParticipant(connectionId) {
     peers.delete(connectionId);
 }
 
-export async function leave() {
+export function leave() {
     clearInterval(adaptationTimer);
     adaptationTimer = undefined;
     goodNetworkSamples = 0;
@@ -355,19 +302,6 @@ export async function leave() {
     releaseScreenWakeLock();
     stopProximityRouting();
     setAudioSessionType("auto");
-    const nativeAudioRouter = getNativeAudioRouter();
-    try {
-        await nativeAudioRouter?.reset();
-    } catch (error) {
-        console.warn("Unable to reset native audio routing", error);
-    }
-    try {
-        if (typeof nativeAudioRouter?.stopCall === "function") {
-            await nativeAudioRouter.stopCall();
-        }
-    } catch (error) {
-        console.warn("Unable to stop native background call handling", error);
-    }
 
     for (const connectionId of [...peers.keys()]) {
         removeParticipant(connectionId);
@@ -504,14 +438,11 @@ async function createPeer(connectionId) {
     };
 
     connection.onicecandidate = event => {
-        const reference = dotNetReference;
-        if (!event.candidate || !reference) return;
-        reference.invokeMethodAsync(
+        if (!event.candidate) return;
+        dotNetReference.invokeMethodAsync(
             "SendVoiceIceCandidate",
             connectionId,
-            JSON.stringify(event.candidate)).catch(error => {
-                console.warn("Unable to send voice ICE candidate", error);
-            });
+            JSON.stringify(event.candidate));
     };
 
     await Promise.all(audioSenders.map(applySenderAudioQuality));
@@ -647,32 +578,4 @@ async function getNetworkSample(peer) {
 
 function notifyAudioQualityChanged() {
     dotNetReference?.invokeMethodAsync("AudioQualityAdapted", audioQuality).catch(() => {});
-}
-
-export async function registerBackgroundCalls(channel, name, password, clientInstanceId) {
-    const nativeAudioRouter = getNativeAudioRouter();
-    if (typeof nativeAudioRouter?.registerBackground !== "function") return false;
-
-    const result = await nativeAudioRouter.registerBackground({
-        serverUrl: new URL("/signalr", window.location.origin).toString(),
-        channel,
-        name,
-        password,
-        clientInstanceId
-    });
-    return result.notificationsEnabled;
-}
-
-export async function restoreBackgroundSession() {
-    const nativeAudioRouter = getNativeAudioRouter();
-    return typeof nativeAudioRouter?.restoreBackgroundSession === "function"
-        ? await nativeAudioRouter.restoreBackgroundSession()
-        : null;
-}
-
-export async function unregisterBackgroundCalls() {
-    const nativeAudioRouter = getNativeAudioRouter();
-    if (typeof nativeAudioRouter?.unregisterBackground === "function") {
-        await nativeAudioRouter.unregisterBackground();
-    }
 }

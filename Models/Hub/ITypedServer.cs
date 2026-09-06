@@ -11,10 +11,6 @@ namespace Models.Hub
 
         Task Rejoin(string channel, string name, string clientInstanceId);
 
-        Task RegisterBackground(string channel, string name, string clientInstanceId);
-
-        Task UnregisterBackground();
-
         Task Leave();
 
         Task<List<VoiceParticipant>> JoinVoice();
@@ -23,7 +19,7 @@ namespace Models.Hub
 
         Task<TurnHealthStatus> CheckTurnHealth();
 
-        Task<string> RingVoice(string targetClientInstanceId);
+        Task RingVoice(string targetConnectionId);
 
         Task CancelVoiceCall(string targetConnectionId, bool timedOut);
 

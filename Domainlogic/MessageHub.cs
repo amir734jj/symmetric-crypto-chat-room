@@ -23,10 +23,6 @@ namespace DomainLogic
 
         private static readonly ConcurrentDictionary<string, string> ClientConnections = new();
 
-        private static readonly ConcurrentDictionary<string, (string Channel, string Name, string ClientInstanceId, long JoinedOrder)> BackgroundUsers = new();
-
-        private static readonly ConcurrentDictionary<string, string> BackgroundClientConnections = new();
-
         private static long _joinedOrder;
 
         private static readonly ConcurrentDictionary<string, byte> VoiceUsers = new();
@@ -47,7 +43,6 @@ namespace DomainLogic
         public override async Task OnDisconnectedAsync(Exception ex)
         {
             await Leave();
-            await RemoveBackgroundConnection(Context.ConnectionId);
         }
 
         public async Task Send(MessagePayload message)
@@ -84,40 +79,16 @@ namespace DomainLogic
             return JoinRoom(channel, name, clientInstanceId);
         }
 
-        public async Task RegisterBackground(string channel, string name, string clientInstanceId)
-        {
-            ValidateClientInstanceId(clientInstanceId);
-            await RemoveBackgroundConnection(Context.ConnectionId);
-
-            var staleConnectionId = ClaimClientConnection(
-                BackgroundClientConnections,
-                clientInstanceId,
-                Context.ConnectionId);
-            if (staleConnectionId != null)
-            {
-                await RemoveBackgroundConnection(staleConnectionId);
-            }
-
-            BackgroundUsers[Context.ConnectionId] = (
-                channel,
-                name,
-                clientInstanceId,
-                Interlocked.Increment(ref _joinedOrder));
-            await NotifyAll(channel, MessageTypeEnum.Joined);
-        }
-
-        public Task UnregisterBackground()
-        {
-            return RemoveBackgroundConnection(Context.ConnectionId);
-        }
-
         private async Task JoinRoom(string channel, string name, string clientInstanceId)
         {
-            ValidateClientInstanceId(clientInstanceId);
+            if (string.IsNullOrWhiteSpace(clientInstanceId) || clientInstanceId.Length > 128)
+            {
+                throw new HubException("Client instance ID is invalid");
+            }
 
             await Leave();
 
-            var staleConnectionId = ClaimClientConnection(ClientConnections, clientInstanceId, Context.ConnectionId);
+            var staleConnectionId = ClaimClientConnection(clientInstanceId, Context.ConnectionId);
             if (staleConnectionId != null)
             {
                 await RemoveConnection(staleConnectionId);
@@ -127,7 +98,6 @@ namespace DomainLogic
 
             Users[Context.ConnectionId] = (channel, name, clientInstanceId, Interlocked.Increment(ref _joinedOrder));
 
-            await TransferPendingCallToForeground(channel, clientInstanceId);
             await NotifyAll(channel, MessageTypeEnum.Joined);
         }
 
@@ -166,25 +136,6 @@ namespace DomainLogic
             }
 
             await Groups.RemoveFromGroupAsync(connectionId, userInfo.Channel);
-            await NotifyAll(userInfo.Channel, MessageTypeEnum.Left);
-        }
-
-        private async Task RemoveBackgroundConnection(string connectionId)
-        {
-            if (!BackgroundUsers.TryRemove(connectionId, out var userInfo))
-            {
-                return;
-            }
-
-            ((ICollection<KeyValuePair<string, string>>)BackgroundClientConnections)
-                .Remove(new KeyValuePair<string, string>(userInfo.ClientInstanceId, connectionId));
-
-            if (PendingVoiceCalls.TryRemove(connectionId, out var callerConnectionId))
-            {
-                await Clients.Client(callerConnectionId)
-                    .VoiceCallResponded(connectionId, userInfo.Name, false);
-            }
-
             await NotifyAll(userInfo.Channel, MessageTypeEnum.Left);
         }
 
@@ -238,10 +189,9 @@ namespace DomainLogic
             return _turnHealthChecker.CheckAsync();
         }
 
-        public async Task<string> RingVoice(string targetClientInstanceId)
+        public async Task RingVoice(string targetConnectionId)
         {
             var caller = GetCurrentUser();
-            var targetConnectionId = ResolveClientConnection(targetClientInstanceId, caller.Channel);
             var target = GetUserInSameChannel(targetConnectionId, caller.Channel);
             Debug.Assert(target.Channel == caller.Channel);
             if (targetConnectionId == Context.ConnectionId)
@@ -263,15 +213,13 @@ namespace DomainLogic
                 TryRemovePendingCall(targetConnectionId, Context.ConnectionId);
                 throw;
             }
-
-            return targetConnectionId;
         }
 
         public Task CancelVoiceCall(string targetConnectionId, bool timedOut)
         {
             var caller = GetCurrentUser();
             if (!TryRemovePendingCall(targetConnectionId, Context.ConnectionId) ||
-                !TryGetUser(targetConnectionId, out var target) ||
+                !Users.TryGetValue(targetConnectionId, out var target) ||
                 target.Channel != caller.Channel)
             {
                 return Task.CompletedTask;
@@ -344,7 +292,7 @@ namespace DomainLogic
 
         private static (string Channel, string Name, string ClientInstanceId, long JoinedOrder) GetUserInSameChannel(string connectionId, string channel)
         {
-            if (!TryGetUser(connectionId, out var user) || user.Channel != channel)
+            if (!Users.TryGetValue(connectionId, out var user) || user.Channel != channel)
             {
                 throw new HubException("User is not online in the same channel");
             }
@@ -358,115 +306,37 @@ namespace DomainLogic
                 .Remove(new KeyValuePair<string, string>(targetConnectionId, callerConnectionId));
         }
 
-        private static bool TryGetUser(
-            string connectionId,
-            out (string Channel, string Name, string ClientInstanceId, long JoinedOrder) user)
-        {
-            return Users.TryGetValue(connectionId, out user) ||
-                BackgroundUsers.TryGetValue(connectionId, out user);
-        }
-
-        private static string ResolveClientConnection(string clientInstanceId, string channel)
-        {
-            if (ClientConnections.TryGetValue(clientInstanceId, out var foregroundConnectionId) &&
-                Users.TryGetValue(foregroundConnectionId, out var foregroundUser) &&
-                foregroundUser.Channel == channel)
-            {
-                return foregroundConnectionId;
-            }
-
-            if (BackgroundClientConnections.TryGetValue(clientInstanceId, out var backgroundConnectionId) &&
-                BackgroundUsers.TryGetValue(backgroundConnectionId, out var backgroundUser) &&
-                backgroundUser.Channel == channel)
-            {
-                return backgroundConnectionId;
-            }
-
-            if (TryGetUser(clientInstanceId, out var legacyUser) && legacyUser.Channel == channel)
-            {
-                return clientInstanceId;
-            }
-
-            throw new HubException("User is not online in the same channel");
-        }
-
-        private static string ClaimClientConnection(
-            ConcurrentDictionary<string, string> connections,
-            string clientInstanceId,
-            string connectionId)
+        private static string? ClaimClientConnection(string clientInstanceId, string connectionId)
         {
             while (true)
             {
-                if (connections.TryAdd(clientInstanceId, connectionId))
+                if (ClientConnections.TryAdd(clientInstanceId, connectionId))
                 {
                     return null;
                 }
 
-                var previousConnectionId = connections[clientInstanceId];
+                var previousConnectionId = ClientConnections[clientInstanceId];
                 if (previousConnectionId == connectionId)
                 {
                     return null;
                 }
 
-                if (connections.TryUpdate(clientInstanceId, connectionId, previousConnectionId))
+                if (ClientConnections.TryUpdate(clientInstanceId, connectionId, previousConnectionId))
                 {
                     return previousConnectionId;
                 }
             }
         }
 
-        private async Task TransferPendingCallToForeground(string channel, string clientInstanceId)
-        {
-            var backgroundConnectionId = BackgroundUsers
-                .Where(user => user.Value.Channel == channel && user.Value.ClientInstanceId == clientInstanceId)
-                .Select(user => user.Key)
-                .FirstOrDefault();
-            if (backgroundConnectionId == null ||
-                !PendingVoiceCalls.TryRemove(backgroundConnectionId, out var callerConnectionId))
-            {
-                return;
-            }
-
-            if (!PendingVoiceCalls.TryAdd(Context.ConnectionId, callerConnectionId) ||
-                !Users.TryGetValue(callerConnectionId, out var caller))
-            {
-                await Clients.Client(callerConnectionId)
-                    .VoiceCallResponded(backgroundConnectionId, Users[Context.ConnectionId].Name, false);
-                return;
-            }
-
-            await Clients.Client(backgroundConnectionId)
-                .VoiceCallCancelled(callerConnectionId, false);
-            await Clients.Client(Context.ConnectionId)
-                .VoiceCallReceived(callerConnectionId, caller.Name);
-        }
-
-        private static void ValidateClientInstanceId(string clientInstanceId)
-        {
-            if (string.IsNullOrWhiteSpace(clientInstanceId) || clientInstanceId.Length > 128)
-            {
-                throw new HubException("Client instance ID is invalid");
-            }
-        }
-
         private async Task NotifyAll(string channel, MessageTypeEnum type)
         {
-            var foregroundClientIds = Users
-                .Where(user => user.Value.Channel == channel)
-                .Select(user => user.Value.ClientInstanceId)
-                .ToHashSet();
             var users = Users
                 .Where(x => x.Value.Channel == channel)
-                .Select(x => new { ConnectionId = x.Key, x.Value.ClientInstanceId, x.Value.Name, x.Value.JoinedOrder })
-                .Concat(BackgroundUsers
-                    .Where(x => x.Value.Channel == channel && !foregroundClientIds.Contains(x.Value.ClientInstanceId))
-                    .Select(x => new { ConnectionId = x.Key, x.Value.ClientInstanceId, x.Value.Name, x.Value.JoinedOrder }))
-                .OrderByDescending(x => x.JoinedOrder)
+                .OrderByDescending(x => x.Value.JoinedOrder)
                 .Select(x => new OnlineUser
                 {
-                    ConnectionId = x.ConnectionId,
-                    ClientInstanceId = x.ClientInstanceId,
-                    Name = x.Name
+                    ConnectionId = x.Key,
+                    Name = x.Value.Name
                 })
                 .ToList();
             
