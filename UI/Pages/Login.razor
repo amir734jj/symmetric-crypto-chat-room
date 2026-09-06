@@ -79,7 +79,7 @@
 
     async Task ValidFormSubmitted(EditContext editContext)
     {
-        await Login(_model);
+        await PerformLogin(_model);
     }
 
     async Task LoginWithSavedCredentials()
@@ -88,10 +88,10 @@
         if (savedLogin == null) return;
 
         CopyToModel(savedLogin);
-        await Login(_model);
+        await PerformLogin(_model);
     }
 
-    async Task Login(LoginViewModel login)
+    async Task PerformLogin(LoginViewModel login)
     {
         try
         {
