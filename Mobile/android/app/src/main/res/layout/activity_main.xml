@@ -9,4 +9,17 @@
     <WebView
         android:layout_width="match_parent"
         android:layout_height="match_parent" />
+
+    <ImageButton
+        android:id="@+id/native_debug_button"
+        android:layout_width="52dp"
+        android:layout_height="52dp"
+        android:layout_gravity="bottom|end"
+        android:layout_margin="16dp"
+        android:backgroundTint="#202824"
+        android:contentDescription="Open app diagnostics"
+        android:elevation="8dp"
+        android:padding="14dp"
+        android:src="@android:drawable/ic_menu_info_details"
+        android:tint="#FFFFFF" />
 </androidx.coordinatorlayout.widget.CoordinatorLayout>
