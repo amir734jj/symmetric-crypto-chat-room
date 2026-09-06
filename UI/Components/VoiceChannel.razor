@@ -227,6 +227,8 @@
 </section>
 
 @code {
+    private const string VoiceModulePath = "./js/voice-chat.js?v=20260906-1";
+
     private static readonly TimeSpan RingTimeout = TimeSpan.FromSeconds(30);
     private readonly HashSet<string> _participantIds = [];
     private readonly List<string> _transcript = [];
@@ -329,7 +331,7 @@
 
         try
         {
-            _module ??= await Js.InvokeAsync<IJSObjectReference>("import", "./js/voice-chat.js");
+            _module ??= await Js.InvokeAsync<IJSObjectReference>("import", VoiceModulePath);
             _reference ??= DotNetObjectReference.Create(this);
 
             var turnCredentials = await SignalRStateManager.GetTurnCredentials();
@@ -346,7 +348,14 @@
                 _videoQuality);
             _audioOutputSelectionSupported = await _module.InvokeAsync<bool>("supportsAudioOutputSelection");
             _usesAudioSessionOutputModes = await _module.InvokeAsync<bool>("usesAudioSessionOutputModes");
-            _liveTranscriptionSupported = await _module.InvokeAsync<bool>("supportsLiveTranscription");
+            try
+            {
+                _liveTranscriptionSupported = await _module.InvokeAsync<bool>("supportsLiveTranscription");
+            }
+            catch (JSException exception) when (exception.Message.Contains("supportsLiveTranscription"))
+            {
+                _liveTranscriptionSupported = false;
+            }
 
             var participants = await SignalRStateManager.JoinVoice();
             _joined = true;
