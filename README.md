@@ -16,13 +16,15 @@ Simple secure chat room web (+ file transfer) application using SignalR (dotnet 
 - Used [LiteDB](https://www.litedb.org/) to playback messages from 10 minutes ago to just joined users
 - [Fody.PropertyChanged](https://github.com/Fody/PropertyChanged) to detect if any of state's properties changes which triggers re-renders of UI
 
-### Self-hosted voice channel
+### Self-hosted voice and video channel
 
-The chat application and coturn are deployed as separate Dockerfile-based services. The coturn image is maintained in the sibling `stun-turn-setup` repository. No public STUN/TURN service is configured. Encoded audio frames are encrypted with length-preserving AES-256-CTR using a PBKDF2 key derived from the channel name and shared chat password. WebRTC DTLS-SRTP authenticates and encrypts the media transport as a second protection layer.
+The chat application and coturn are deployed as separate Dockerfile-based services. The coturn image is maintained in the sibling `stun-turn-setup` repository. No public STUN/TURN service is configured. Encoded audio and video frames are encrypted with length-preserving AES-256-CTR using a PBKDF2 key derived from the channel name and shared chat password. WebRTC DTLS-SRTP authenticates and encrypts the media transport as a second protection layer.
 
-Password-encrypted voice requires a browser with `RTCRtpScriptTransform` support. The voice connection fails closed when encoded transforms are unavailable; it never sends voice protected only by WebRTC transport encryption.
+Password-encrypted calls require a browser with `RTCRtpScriptTransform` support. The connection fails closed when encoded transforms are unavailable; it never sends audio or video protected only by WebRTC transport encryption. Calls start as audio-only. Use **Start video** during a call to grant camera access and share video, and **Stop video** to stop the camera and remove its WebRTC sender.
 
 Voice quality defaults to Auto at the 32 kbps Medium profile. It promotes to the 64 kbps High profile after sustained good packet loss, round-trip time, and outgoing-bandwidth measurements, then falls back to Medium when conditions degrade. Manual Low, Medium, and High modes remain available.
+
+Camera quality also defaults to Auto. It starts at Medium (480p, 24 fps, up to 700 kbps), promotes to High (720p, 30 fps, up to 1.5 Mbps) when network measurements remain strong, and steps down to Low (240p, 15 fps, up to 250 kbps) as conditions degrade. The same Low, Medium, and High profiles can be selected manually before or during a call.
 
 Microphone audio uses real-time echo cancellation, noise suppression, and automatic gain control. Browsers that expose native voice isolation use it automatically; other browsers retain the standard WebRTC noise suppression fallback. The ICE debug view reports which processing features are supported and active.
 
@@ -36,7 +38,7 @@ Set `TURN_EXTERNAL_IP` on the coturn service to its Docker host's public IPv4 ad
 
 Set `TURN_SECRET` explicitly. The API uses it to issue short-lived credentials, and the coturn service uses the same value to validate them.
 
-Microphone access requires a secure browser context. Use a trusted HTTPS certificate in production, either at a reverse proxy on the same host or by configuring ASP.NET Core HTTPS and mounting the certificate into the container. Plain HTTP works only on `localhost` for browser media capture.
+Microphone and camera access require a secure browser context. Use a trusted HTTPS certificate in production, either at a reverse proxy on the same host or by configuring ASP.NET Core HTTPS and mounting the certificate into the container. Plain HTTP works only on `localhost` for browser media capture.
 
 #### Coolify
 

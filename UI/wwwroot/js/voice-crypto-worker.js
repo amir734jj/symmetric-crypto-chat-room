@@ -1,24 +1,27 @@
-const opusHeaderLength = 1;
+const clearHeaderLength = 1;
 
 self.onrtctransform = event => {
-    const { key, senderId } = event.transformer.options;
+    const { key, senderId, mediaKind } = event.transformer.options;
     const cryptoKey = importKey(key);
-    const counterPrefix = createCounterPrefix(senderId);
+    const counterPrefix = createCounterPrefix(senderId, mediaKind);
 
     event.transformer.readable
         .pipeThrough(new TransformStream({
             async transform(frame, controller) {
                 const input = new Uint8Array(frame.data);
-                if (input.byteLength <= opusHeaderLength) return;
+                if (input.byteLength <= clearHeaderLength) {
+                    controller.enqueue(frame);
+                    return;
+                }
 
-                const header = input.slice(0, opusHeaderLength);
+                const header = input.slice(0, clearHeaderLength);
                 const transformed = await crypto.subtle.encrypt(
                     { name: "AES-CTR", counter: await createCounter(counterPrefix, frame.timestamp), length: 64 },
                     await cryptoKey,
-                    input.slice(opusHeaderLength));
+                    input.slice(clearHeaderLength));
                 const output = new Uint8Array(input.byteLength);
                 output.set(header);
-                output.set(new Uint8Array(transformed), opusHeaderLength);
+                output.set(new Uint8Array(transformed), clearHeaderLength);
                 frame.data = output.buffer;
                 controller.enqueue(frame);
             }
@@ -31,8 +34,8 @@ function importKey(base64Key) {
     return crypto.subtle.importKey("raw", bytes, "AES-CTR", false, ["encrypt"]);
 }
 
-function createCounterPrefix(senderId) {
-    return crypto.subtle.digest("SHA-256", new TextEncoder().encode(senderId));
+function createCounterPrefix(senderId, mediaKind) {
+    return crypto.subtle.digest("SHA-256", new TextEncoder().encode(`${senderId}:${mediaKind ?? "audio"}`));
 }
 
 async function createCounter(prefix, timestamp) {

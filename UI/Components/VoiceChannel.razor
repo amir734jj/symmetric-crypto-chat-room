@@ -4,10 +4,10 @@
 @inject IJSRuntime Js
 @implements IAsyncDisposable
 
-<section class="voice-channel mb-3" aria-label="Voice channel">
+<section class="voice-channel mb-3" aria-label="Voice and video channel">
     <div class="voice-channel-header">
         <div class="voice-channel-title">
-            <strong>Voice channel</strong>
+            <strong>Voice &amp; video</strong>
             @if (_joined)
             {
                 <span class="ms-2 text-muted">@(_participantIds.Count + 1) connected</span>
@@ -24,13 +24,22 @@
                     <option value="high">High</option>
                 </select>
             </label>
+            <label class="voice-quality">
+                <span>Camera quality</span>
+                <select @key="_effectiveVideoQuality" class="form-select form-select-sm" @bind="_videoQuality" @bind:after="VideoQualityChanged" disabled="@_busy">
+                    <option value="auto">Auto - Current: @VideoQualityLabel(_effectiveVideoQuality)</option>
+                    <option value="low">Low (240p)</option>
+                    <option value="standard">Medium (480p)</option>
+                    <option value="high">High (720p)</option>
+                </select>
+            </label>
             <HxButton Color="@TurnHealthColor" Enabled="@(!_checkingTurn)" OnClick="CheckTurnHealth">
                 @TurnHealthButtonText
             </HxButton>
             @if (!_joined)
             {
                 <HxButton Color="ThemeColor.Success" Enabled="@(!_busy)" OnClick="Join">
-                    Join voice
+                    Join call
                 </HxButton>
             }
             else
@@ -67,11 +76,14 @@
                 <HxButton Color="ThemeColor.Secondary" OnClick="ToggleMute">
                     @(_muted ? "Unmute" : "Mute")
                 </HxButton>
+                <HxButton Color="ThemeColor.Secondary" Enabled="@(!_busy)" OnClick="ToggleVideo">
+                    @(_videoEnabled ? "Stop video" : "Start video")
+                </HxButton>
                 <HxButton Color="ThemeColor.Secondary" OnClick="ShowDebug">
                     ICE debug
                 </HxButton>
                 <HxButton Color="ThemeColor.Danger" OnClick="Leave">
-                    @(_participantIds.Count > 0 ? "End call" : "Leave voice")
+                    @(_participantIds.Count > 0 ? "End call" : "Leave call")
                 </HxButton>
             }
         </div>
@@ -91,7 +103,7 @@
                     <span>@user.Name</span>
                     @if (_participantIds.Contains(user.ConnectionId))
                     {
-                        <span class="text-success">In voice</span>
+                        <span class="text-success">In call</span>
                     }
                     else
                     {
@@ -162,7 +174,10 @@
         </div>
     }
 
-    <div @ref="_remoteAudioContainer"></div>
+    <div class="voice-video-grid mt-3">
+        <video @ref="_localVideo" class="voice-video voice-video-local" autoplay muted playsinline hidden="@(!_videoEnabled)" aria-label="Your camera preview"></video>
+        <div class="voice-remote-media" @ref="_remoteMediaContainer"></div>
+    </div>
 
     <audio @ref="_ringtone" loop preload="auto" style="display: none">
         <source src="call.mp3" type="audio/mpeg" />
@@ -174,10 +189,12 @@
     private readonly HashSet<string> _participantIds = [];
     private DotNetObjectReference<VoiceChannel>? _reference;
     private IJSObjectReference? _module;
-    private ElementReference _remoteAudioContainer;
+    private ElementReference _remoteMediaContainer;
+    private ElementReference _localVideo;
     private ElementReference _ringtone;
     private bool _joined;
     private bool _muted;
+    private bool _videoEnabled;
     private bool _busy;
     private bool _checkingTurn;
     private bool _showDebug;
@@ -193,6 +210,8 @@
     private string? _callStatus;
     private string _audioQuality = "auto";
     private string _effectiveAudioQuality = "standard";
+    private string _videoQuality = "auto";
+    private string _effectiveVideoQuality = "standard";
     private string _audioOutputMode = "auto";
     private TurnHealthStatus? _turnHealth;
 
@@ -265,10 +284,12 @@
             await _module.InvokeVoidAsync(
                 "initialize",
                 _reference,
-                _remoteAudioContainer,
+                _remoteMediaContainer,
+                _localVideo,
                 turnCredentials,
                 voiceKey,
-                _audioQuality);
+                _audioQuality,
+                _videoQuality);
             _audioOutputSelectionSupported = await _module.InvokeAsync<bool>("supportsAudioOutputSelection");
             _usesAudioSessionOutputModes = await _module.InvokeAsync<bool>("usesAudioSessionOutputModes");
 
@@ -298,6 +319,26 @@
     {
         _muted = !_muted;
         await _module!.InvokeVoidAsync("setMuted", _muted);
+    }
+
+    private async Task ToggleVideo()
+    {
+        if (_module == null) return;
+
+        _busy = true;
+        try
+        {
+            _videoEnabled = await _module.InvokeAsync<bool>("setVideoEnabled", !_videoEnabled);
+            _error = null;
+        }
+        catch (Exception exception)
+        {
+            _error = $"Unable to change camera state: {exception.Message}";
+        }
+        finally
+        {
+            _busy = false;
+        }
     }
 
     private async Task ChooseAudioOutput()
@@ -349,6 +390,22 @@
             catch (Exception exception)
             {
                 _error = $"Unable to change audio quality: {exception.Message}";
+            }
+        }
+    }
+
+    private async Task VideoQualityChanged()
+    {
+        if (_joined && _module != null)
+        {
+            try
+            {
+                _effectiveVideoQuality = await _module.InvokeAsync<string>("setVideoQuality", _videoQuality);
+                _error = null;
+            }
+            catch (Exception exception)
+            {
+                _error = $"Unable to change camera quality: {exception.Message}";
             }
         }
     }
@@ -645,6 +702,26 @@
         });
     }
 
+    [JSInvokable]
+    public Task VideoStopped()
+    {
+        return InvokeAsync(() =>
+        {
+            _videoEnabled = false;
+            StateHasChanged();
+        });
+    }
+
+    [JSInvokable]
+    public Task VideoQualityAdapted(string quality)
+    {
+        return InvokeAsync(() =>
+        {
+            _effectiveVideoQuality = quality;
+            StateHasChanged();
+        });
+    }
+
     private static string AudioQualityLabel(string quality)
     {
         return quality switch
@@ -652,6 +729,16 @@
             "low" => "Low",
             "high" => "High",
             _ => "Medium"
+        };
+    }
+
+    private static string VideoQualityLabel(string quality)
+    {
+        return quality switch
+        {
+            "low" => "Low (240p)",
+            "high" => "High (720p)",
+            _ => "Medium (480p)"
         };
     }
 
@@ -665,6 +752,7 @@
         _participantIds.Clear();
         _joined = false;
         _muted = false;
+        _videoEnabled = false;
         _showDebug = false;
         _audioOutputSelectionSupported = false;
         _usesAudioSessionOutputModes = false;

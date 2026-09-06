@@ -118,6 +118,34 @@ pre {
     gap: 0.75rem;
 }
 
+.voice-video-grid {
+    display: grid;
+    gap: 0.75rem;
+    grid-template-columns: repeat(auto-fit, minmax(min(100%, 18rem), 1fr));
+}
+
+.voice-video {
+    aspect-ratio: 16 / 9;
+    background: #111714;
+    border: 1px solid #86958d;
+    border-radius: 6px;
+    display: block;
+    object-fit: cover;
+    width: 100%;
+}
+
+.voice-remote-media {
+    display: contents;
+}
+
+.voice-video[hidden] {
+    display: none;
+}
+
+.voice-video-local {
+    transform: scaleX(-1);
+}
+
 .voice-debug {
     min-width: 0;
 }
