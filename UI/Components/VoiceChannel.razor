@@ -76,6 +76,13 @@
                 <HxButton Color="ThemeColor.Secondary" OnClick="ToggleMute">
                     @(_muted ? "Unmute" : "Mute")
                 </HxButton>
+                @if (_screenWakeLockSupported)
+                {
+                    <div class="form-check form-switch voice-keep-awake">
+                        <input id="keep-screen-on" class="form-check-input" type="checkbox" role="switch" @bind="_keepScreenOn" @bind:after="KeepScreenOnChanged" />
+                        <label class="form-check-label" for="keep-screen-on">Keep screen on</label>
+                    </div>
+                }
                 <HxButton Color="ThemeColor.Secondary" Enabled="@(!_busy && !_screenSharing)" OnClick="ToggleVideo">
                     @(_videoEnabled ? "Stop video" : "Start video")
                 </HxButton>
@@ -245,7 +252,7 @@
 </section>
 
 @code {
-    private const string VoiceModulePath = "./js/voice-chat.js?v=20260906-9";
+    private const string VoiceModulePath = "./js/voice-chat.js?v=20260913-1";
 
     private static readonly TimeSpan RingTimeout = TimeSpan.FromSeconds(30);
     private readonly HashSet<string> _participantIds = [];
@@ -267,6 +274,8 @@
     private long _debugRequestVersion;
     private bool _audioOutputSelectionSupported;
     private bool _usesAudioSessionOutputModes;
+    private bool _screenWakeLockSupported;
+    private bool _keepScreenOn;
     private bool _screenSharingSupported;
     private bool _liveTranscriptionSupported;
     private bool _transcriptionEnabled;
@@ -371,6 +380,11 @@
                 _videoQuality);
             _audioOutputSelectionSupported = await _module.InvokeAsync<bool>("supportsAudioOutputSelection");
             _usesAudioSessionOutputModes = await _module.InvokeAsync<bool>("usesAudioSessionOutputModes");
+            _screenWakeLockSupported = await _module.InvokeAsync<bool>("supportsMobileScreenWakeLock");
+            if (_keepScreenOn && _screenWakeLockSupported)
+            {
+                _keepScreenOn = await _module.InvokeAsync<bool>("setKeepScreenOn", true);
+            }
             try
             {
                 _screenSharingSupported = await _module.InvokeAsync<bool>("supportsScreenSharing");
@@ -423,6 +437,22 @@
     {
         _muted = !_muted;
         await _module!.InvokeVoidAsync("setMuted", _muted);
+    }
+
+    private async Task KeepScreenOnChanged()
+    {
+        if (_module == null) return;
+
+        try
+        {
+            _keepScreenOn = await _module.InvokeAsync<bool>("setKeepScreenOn", _keepScreenOn);
+            _error = null;
+        }
+        catch (Exception exception)
+        {
+            _keepScreenOn = false;
+            _error = $"Unable to change the screen wake setting: {exception.Message}";
+        }
     }
 
     private async Task ToggleVideo()
@@ -1117,6 +1147,11 @@
         _showDebug = false;
         _audioOutputSelectionSupported = false;
         _usesAudioSessionOutputModes = false;
+        _screenWakeLockSupported = false;
+        if (!preserveCallDuration)
+        {
+            _keepScreenOn = false;
+        }
         _screenSharingSupported = false;
         _liveTranscriptionSupported = false;
         _transcriptionEnabled = false;

@@ -91,6 +91,12 @@ pre {
     min-width: 7.5rem;
 }
 
+.voice-keep-awake {
+    align-self: center;
+    margin: 0;
+    white-space: nowrap;
+}
+
 .voice-transcription-model .form-select {
     max-width: min(26rem, 65vw);
 }

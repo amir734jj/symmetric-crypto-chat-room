@@ -26,6 +26,7 @@ let goodVideoNetworkSamples = 0;
 let poorVideoNetworkSamples = 0;
 let adaptationInProgress = false;
 let screenWakeLock;
+let keepScreenOn = false;
 let selectedAudioOutputId = "";
 let audioOutputMode = "auto";
 let proximitySensor;
@@ -107,7 +108,6 @@ export async function initialize(
     localStream = new MediaStream();
     document.removeEventListener("visibilitychange", handleVisibilityChange);
     document.addEventListener("visibilitychange", handleVisibilityChange);
-    await requestScreenWakeLock();
     startQualityAdaptation();
     notifyAudioQualityChanged();
     notifyVideoQualityChanged();
@@ -219,6 +219,23 @@ export function setMuted(muted) {
 
 export function supportsScreenSharing() {
     return typeof navigator.mediaDevices?.getDisplayMedia === "function";
+}
+
+export function supportsMobileScreenWakeLock() {
+    const isMobile = navigator.userAgentData?.mobile === true ||
+        /Android|iPhone|iPad|iPod|Mobile/i.test(navigator.userAgent) ||
+        (navigator.platform === "MacIntel" && navigator.maxTouchPoints > 1);
+    return isMobile && "wakeLock" in navigator;
+}
+
+export async function setKeepScreenOn(enabled) {
+    keepScreenOn = Boolean(enabled) && supportsMobileScreenWakeLock();
+    if (!keepScreenOn) {
+        releaseScreenWakeLock();
+        return false;
+    }
+
+    return await requestScreenWakeLock();
 }
 
 async function ensureLocalAudio() {
@@ -968,6 +985,7 @@ export function leave() {
     goodVideoNetworkSamples = 0;
     poorVideoNetworkSamples = 0;
     document.removeEventListener("visibilitychange", handleVisibilityChange);
+    keepScreenOn = false;
     releaseScreenWakeLock();
     stopProximityRouting();
     setAudioSessionType("auto");
@@ -1011,16 +1029,20 @@ export function leave() {
 }
 
 async function requestScreenWakeLock() {
-    if (!("wakeLock" in navigator) || !localStream || document.visibilityState !== "visible" ||
-        (screenWakeLock && !screenWakeLock.released)) return;
+    if (!keepScreenOn || !supportsMobileScreenWakeLock() || !localStream ||
+        document.visibilityState !== "visible") return false;
+    if (screenWakeLock && !screenWakeLock.released) return true;
 
     try {
         screenWakeLock = await navigator.wakeLock.request("screen");
         screenWakeLock.addEventListener("release", () => {
             screenWakeLock = undefined;
         }, { once: true });
+        return true;
     } catch (error) {
         console.warn("Unable to keep the screen awake during the voice call", error);
+        keepScreenOn = false;
+        return false;
     }
 }
 
@@ -1031,7 +1053,7 @@ function releaseScreenWakeLock() {
 }
 
 function handleVisibilityChange() {
-    if (document.visibilityState === "visible" && localStream && !screenWakeLock) {
+    if (keepScreenOn && document.visibilityState === "visible" && localStream && !screenWakeLock) {
         requestScreenWakeLock();
     }
 }
