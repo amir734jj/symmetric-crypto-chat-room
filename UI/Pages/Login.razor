@@ -38,7 +38,8 @@
     }
 
     <section class="channel-picker mb-3" aria-labelledby="channel-picker-title">
-        <h4 id="channel-picker-title">Choose a channel</h4>
+        <h4 id="channel-picker-title">Active channels</h4>
+        <p class="text-muted">Select a channel below, or enter a new channel name.</p>
         @if (_channelsLoading)
         {
             <p class="text-muted" role="status">Loading channels...</p>
@@ -64,24 +65,19 @@
         }
     </section>
 
-    @if (_channelSelected)
-    {
-        <EditForm Model="@_model" OnValidSubmit="@(ValidFormSubmitted)" OnInvalidSubmit="@(InvalidFormSubmitted)">
-            <DataAnnotationsValidator/>
+    <EditForm Model="@_model" OnValidSubmit="@(ValidFormSubmitted)" OnInvalidSubmit="@(InvalidFormSubmitted)">
+        <DataAnnotationsValidator/>
 
-            <HxFormState>
-                <div class="selected-channel mb-3">
-                    Joining <strong>#@_model.Channel</strong>
-                </div>
+        <HxFormState>
+            <HxInputText Label="Name" @bind-Value="@_model.Name" Placeholder="Enter your name here" Hint="Name you want to use in the chat (public information)"/>
 
-                <HxInputText Label="Name" @bind-Value="@_model.Name" Placeholder="Enter your name here" Hint="Name you want to use in the chat (public information)"/>
+            <HxInputText Label="Channel" @bind-Value="@_model.Channel" Placeholder="Enter channel name here" Hint="Select an active channel above or enter a new channel name (public information)"/>
 
-                <HxInputText Label="Password" @bind-Value="@_model.Password" Placeholder="Enter password here" Hint="Password (at least 3 characters long)" Type="InputType.Password"/>
+            <HxInputText Label="Password" @bind-Value="@_model.Password" Placeholder="Enter password here" Hint="Password (at least 3 characters long)" Type="InputType.Password"/>
 
-                <HxSubmit Color="ThemeColor.Primary" Enabled="true">Login</HxSubmit>
-            </HxFormState>
-        </EditForm>
-    }
+            <HxSubmit Color="ThemeColor.Primary" Enabled="true">Login</HxSubmit>
+        </HxFormState>
+    </EditForm>
 </div>
 
 @code {
@@ -92,7 +88,6 @@
     string _selectedSavedLoginId = string.Empty;
     string? _channelsError;
     bool _channelsLoading = true;
-    bool _channelSelected;
 
     bool HasSelectedSavedLogin => FindSelectedSavedLogin() != null;
 
@@ -167,18 +162,16 @@
         if (savedLogin != null)
         {
             CopyToModel(savedLogin);
-            _channelSelected = true;
         }
     }
 
     void SelectChannel(string channel)
     {
         _model.Channel = channel;
-        _channelSelected = true;
     }
 
     bool IsSelectedChannel(string channel) =>
-        _channelSelected && string.Equals(_model.Channel, channel, StringComparison.OrdinalIgnoreCase);
+        string.Equals(_model.Channel, channel, StringComparison.OrdinalIgnoreCase);
 
     async Task RemoveSavedLogin()
     {

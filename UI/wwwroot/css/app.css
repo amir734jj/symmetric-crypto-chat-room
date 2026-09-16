@@ -48,11 +48,6 @@
     white-space: nowrap;
 }
 
-.selected-channel {
-    border-left: 3px solid #198754;
-    padding-left: 0.75rem;
-}
-
 @media (max-width: 575.98px) {
     .saved-login-actions {
         grid-template-columns: 1fr 1fr;
