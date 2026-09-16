@@ -36,30 +36,82 @@
             <div class="form-text">Saved credentials are stored unencrypted in this browser's local storage.</div>
         </div>
     }
-    
-    <EditForm Model="@_model" OnValidSubmit="@(ValidFormSubmitted)" OnInvalidSubmit="@(InvalidFormSubmitted)">
-        <DataAnnotationsValidator/>
-    
-        <HxFormState>
-            <HxInputText Label="Name" @bind-Value="@_model.Name" Placeholder="Enter your name here" Hint="Name you want to use in the chat (public information)"/>
 
-            <HxInputText Label="Channel" @bind-Value="@_model.Channel" Placeholder="Enter channel name here" Hint="Name of the channel want to join (public information)"/>
+    <section class="channel-picker mb-3" aria-labelledby="channel-picker-title">
+        <h4 id="channel-picker-title">Choose a channel</h4>
+        @if (_channelsLoading)
+        {
+            <p class="text-muted" role="status">Loading channels...</p>
+        }
+        else if (!string.IsNullOrWhiteSpace(_channelsError))
+        {
+            <HxAlert Color="ThemeColor.Danger">@_channelsError</HxAlert>
+        }
+        else
+        {
+            <div class="channel-list">
+                @foreach (var channel in _channels)
+                {
+                    <button type="button"
+                            class="channel-option @(IsSelectedChannel(channel.Name) ? "channel-option-selected" : null)"
+                            aria-pressed="@IsSelectedChannel(channel.Name)"
+                            @onclick="@(() => SelectChannel(channel.Name))">
+                        <span class="channel-name">#@channel.Name</span>
+                        <span class="channel-count">@channel.UserCount @(channel.UserCount == 1 ? "person" : "people")</span>
+                    </button>
+                }
+            </div>
+        }
+    </section>
 
-            <HxInputText Label="Password" @bind-Value="@_model.Password" Placeholder="Enter password here" Hint="Password (at least 3 characters long)" Type="InputType.Password"/>
-    
-            <HxSubmit Color="ThemeColor.Primary" Enabled="true">Login</HxSubmit>
-        </HxFormState>
-    
-    </EditForm>
+    @if (_channelSelected)
+    {
+        <EditForm Model="@_model" OnValidSubmit="@(ValidFormSubmitted)" OnInvalidSubmit="@(InvalidFormSubmitted)">
+            <DataAnnotationsValidator/>
+
+            <HxFormState>
+                <div class="selected-channel mb-3">
+                    Joining <strong>#@_model.Channel</strong>
+                </div>
+
+                <HxInputText Label="Name" @bind-Value="@_model.Name" Placeholder="Enter your name here" Hint="Name you want to use in the chat (public information)"/>
+
+                <HxInputText Label="Password" @bind-Value="@_model.Password" Placeholder="Enter password here" Hint="Password (at least 3 characters long)" Type="InputType.Password"/>
+
+                <HxSubmit Color="ThemeColor.Primary" Enabled="true">Login</HxSubmit>
+            </HxFormState>
+        </EditForm>
+    }
 </div>
 
 @code {
     readonly LoginViewModel _model = new();
     readonly List<SavedLogin> _savedLogins = [];
+    readonly List<ChannelSummary> _channels = [];
     IJSObjectReference? _savedLoginsModule;
     string _selectedSavedLoginId = string.Empty;
+    string? _channelsError;
+    bool _channelsLoading = true;
+    bool _channelSelected;
 
     bool HasSelectedSavedLogin => FindSelectedSavedLogin() != null;
+
+    protected override async Task OnInitializedAsync()
+    {
+        try
+        {
+            _channels.AddRange(await SignalRStateManager.GetChannels());
+        }
+        catch (Exception e)
+        {
+            Logger.LogError(e, "Failed to load channels");
+            _channelsError = "Channels could not be loaded. Please try again.";
+        }
+        finally
+        {
+            _channelsLoading = false;
+        }
+    }
 
     protected override async Task OnAfterRenderAsync(bool firstRender)
     {
@@ -112,8 +164,21 @@
     void PopulateFromSavedLogin()
     {
         var savedLogin = FindSelectedSavedLogin();
-        if (savedLogin != null) CopyToModel(savedLogin);
+        if (savedLogin != null)
+        {
+            CopyToModel(savedLogin);
+            _channelSelected = true;
+        }
     }
+
+    void SelectChannel(string channel)
+    {
+        _model.Channel = channel;
+        _channelSelected = true;
+    }
+
+    bool IsSelectedChannel(string channel) =>
+        _channelSelected && string.Equals(_model.Channel, channel, StringComparison.OrdinalIgnoreCase);
 
     async Task RemoveSavedLogin()
     {

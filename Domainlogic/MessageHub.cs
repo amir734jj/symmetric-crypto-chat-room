@@ -106,6 +106,26 @@ namespace DomainLogic
             return RemoveConnection(Context.ConnectionId);
         }
 
+        public Task<List<ChannelSummary>> GetChannels()
+        {
+            var channels = Users.Values
+                .GroupBy(user => user.Channel, StringComparer.OrdinalIgnoreCase)
+                .Select(group => new ChannelSummary
+                {
+                    Name = group.Key,
+                    UserCount = group.Count()
+                })
+                .OrderBy(channel => channel.Name, StringComparer.OrdinalIgnoreCase)
+                .ToList();
+
+            if (!channels.Any(channel => string.Equals(channel.Name, "public", StringComparison.OrdinalIgnoreCase)))
+            {
+                channels.Insert(0, new ChannelSummary { Name = "public" });
+            }
+
+            return Task.FromResult(channels);
+        }
+
         private async Task RemoveConnection(string connectionId)
         {
             if (!Users.TryRemove(connectionId, out var userInfo))

@@ -154,6 +154,16 @@ public sealed class SignalRStateManager : AuthenticationStateProvider, IDisposab
         return _state.UserInfo != null;
     }
 
+    public async Task<List<ChannelSummary>> GetChannels()
+    {
+        while (!_hubConnection.State.HasFlag(HubConnectionState.Connected))
+        {
+            await Task.Delay(1);
+        }
+
+        return await _server.GetChannels();
+    }
+
     public async Task Logout()
     {
         if (_hubConnection.State == HubConnectionState.Connected)

@@ -13,6 +13,8 @@ namespace Models.Hub
 
         Task Leave();
 
+        Task<List<ChannelSummary>> GetChannels();
+
         Task<List<VoiceParticipant>> JoinVoice();
 
         Task<TurnCredentials> GetTurnCredentials();
