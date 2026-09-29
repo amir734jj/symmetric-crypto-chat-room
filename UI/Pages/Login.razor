@@ -27,7 +27,7 @@
                     <option value="">Choose a previous login</option>
                     @foreach (var login in _savedLogins)
                     {
-                        <option value="@login.Id">@login.Name in @login.Channel</option>
+                        <option value="@login.Id">@login.Name in @login.Channel (@GetMaskedPassword(login.Password))</option>
                     }
                 </select>
                 <HxButton Color="ThemeColor.Primary" Enabled="@HasSelectedSavedLogin" OnClick="LoginWithSavedCredentials">Quick login</HxButton>
@@ -199,6 +199,12 @@
         _model.Name = savedLogin.Name;
         _model.Channel = savedLogin.Channel;
         _model.Password = savedLogin.Password;
+    }
+
+    static string GetMaskedPassword(string password)
+    {
+        var visibleCharacterCount = Math.Min(4, Math.Max(1, password.Length - 1));
+        return $"{password[..visibleCharacterCount]}**";
     }
 
     void InvalidFormSubmitted(EditContext editContext)
