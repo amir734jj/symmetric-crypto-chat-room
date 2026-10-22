@@ -118,11 +118,21 @@ async function createHarness(options = {}) {
             constructor() {
                 this.transceivers = [];
                 this.connectionState = "connected";
+                this.signalingState = "stable";
                 this.stats = new Map();
                 connections.push(this);
             }
             getStats() { return Promise.resolve(this.stats); }
             addTrack(track) {
+                const reusable = this.transceivers.find(item =>
+                    !item.sender.track && item.receiver.track.kind === track.kind);
+                if (reusable) {
+                    reusable.sender.track = track;
+                    return reusable.sender;
+                }
+                return this.addTransceiver(track.kind, track).sender;
+            }
+            addTransceiver(kind, track = null) {
                 const sender = {
                     track,
                     getParameters() { return this.parameters ?? {}; },
@@ -143,20 +153,37 @@ async function createHarness(options = {}) {
                         transform = value;
                     }
                 });
-                this.transceivers.push({ sender, receiver: {} });
-                return sender;
+                const transceiver = {
+                    sender,
+                    receiver: { track: { kind, readyState: "live", addEventListener() {} } }
+                };
+                this.transceivers.push(transceiver);
+                return transceiver;
             }
             getTransceivers() { return this.transceivers; }
             getSenders() { return this.transceivers.map(item => item.sender); }
             removeTrack(sender) { sender.track = null; }
             createOffer() { return Promise.resolve({ type: "offer", sdp: "test" }); }
+            createAnswer() { return Promise.resolve({ type: "answer", sdp: "test" }); }
+            setRemoteDescription(description) {
+                this.remoteDescription = description;
+                this.signalingState = description.type === "offer" ? "have-remote-offer" : "stable";
+                if (description.sdp === "incoming-video") {
+                    const { receiver } = this.addTransceiver("video");
+                    this.ontrack({ receiver, track: receiver.track });
+                }
+                return Promise.resolve();
+            }
             setLocalDescription(description) {
                 this.localDescription = description;
+                this.signalingState = description.type === "offer" ? "have-local-offer" : "stable";
+                this.negotiatedSenderTransforms = this.transceivers.map(item => item.sender.transform);
                 return Promise.resolve();
             }
             close() { this.closed = true; }
         }
     });
+
     const modules = new Map();
     function load(filename) {
         if (!modules.has(filename)) modules.set(filename, loadModule(filename));
@@ -181,9 +208,10 @@ async function createHarness(options = {}) {
     }
     const module = await load(path.resolve(__dirname, "..", "wwwroot", "js", "voice-chat.js"));
     const voice = module.namespace;
+    const remoteContainer = createElement();
     async function join(withAudio = false, quality = "auto") {
         await voice.initialize(
-            reference, createElement(), createElement(), { username: "expiry:local", host: "localhost" },
+            reference, remoteContainer, createElement(), { username: "expiry:local", host: "localhost" },
             Buffer.alloc(32, 1).toString("base64"), quality, quality);
         if (withAudio) {
             streams[0].addTrack({
@@ -197,7 +225,7 @@ async function createHarness(options = {}) {
     const defaults = (await load(path.resolve(
         __dirname, "..", "wwwroot", "js", "media-defaults.js"))).namespace;
     return {
-        voice, defaults, imports, workers, contexts, streams, callbacks, connections, join,
+        voice, defaults, imports, workers, contexts, streams, callbacks, connections, join, remoteContainer,
         adaptQuality: () => adaptQuality(),
         networkChanged: () => connectionListeners.get("change")?.(),
         connectionListeners, documentListeners,
@@ -208,6 +236,123 @@ async function createHarness(options = {}) {
         }
     };
 }
+
+test("incoming video prepares the idle sender's encryption before an answer and reuses it when enabling the camera", async () => {
+    const camera = {
+        kind: "video", readyState: "live", stop() {}, addEventListener() {},
+        applyConstraints: () => Promise.resolve()
+    };
+    const h = await createHarness({
+        navigator: { mediaDevices: {
+            getSupportedConstraints: () => ({}),
+            getUserMedia: async () => ({ getVideoTracks: () => [camera] })
+        } }
+    });
+    await h.join(true);
+    await h.voice.connectToParticipants([{ connectionId: "existing", name: "Existing" }]);
+    const offer = JSON.parse(h.callbacks.find(([method]) => method === "SendVoiceOffer")[2]);
+    offer.description.sdp = "incoming-video";
+    await h.voice.receiveOffer("camera-peer", "Camera", JSON.stringify(offer));
+    const connection = h.connections[1];
+    const sender = connection.getSenders()[1];
+    const transform = sender.transform;
+    assert.equal(sender.track, null);
+    assert.equal(connection.negotiatedSenderTransforms[1], transform);
+    assert.equal(transform.options.operation, "encrypt");
+    assert.equal(transform.options.mediaKind, "video");
+    assert.equal(transform.options.contextId, "camera-peer");
+    await h.voice.setVideoEnabled(true);
+    assert.equal(connection.getSenders().length, 2);
+    assert.equal(sender.track, camera);
+    assert.equal(sender.transform, transform);
+    await h.voice.setVideoEnabled(false);
+    await h.voice.setVideoEnabled(true);
+    assert.equal(sender.transform, transform);
+    assert.equal(sender.track, camera);
+    h.voice.leave();
+});
+
+test("a replacement remote video track replaces the displayed stream and old track events cannot hide it", async () => {
+    const h = await createHarness();
+    await h.join(true);
+    await h.voice.connectToParticipants([{ connectionId: "remote", name: "Remote" }]);
+    const connection = h.connections[0];
+    const previous = connection.addTransceiver("video").receiver;
+    const current = connection.addTransceiver("video").receiver;
+    const previousEvents = new Map();
+    previous.track.addEventListener = (name, callback) => previousEvents.set(name, callback);
+    connection.ontrack({ receiver: previous, track: previous.track });
+    const tile = h.remoteContainer.children[1];
+    const video = tile.children[1];
+    const oldStream = video.srcObject;
+    connection.ontrack({ receiver: current, track: current.track });
+    assert.notEqual(video.srcObject, oldStream);
+    assert.deepEqual([...video.srcObject.getVideoTracks()], [current.track]);
+    assert.equal(tile.hidden, false);
+    previous.track.muted = true;
+    previousEvents.get("mute")();
+    previousEvents.get("ended")();
+    assert.equal(tile.hidden, false);
+    assert.deepEqual([...video.srcObject.getVideoTracks()], [current.track]);
+    h.voice.leave();
+});
+
+test("camera quality changes constrain every recipient's encoded dimensions as well as capture", async () => {
+    const constraints = [];
+    const camera = {
+        kind: "video", readyState: "live", stop() {}, addEventListener() {},
+        getSettings: () => ({ width: 1280, height: 720 }),
+        applyConstraints: async value => { constraints.push(value); }
+    };
+    const h = await createHarness({
+        navigator: { mediaDevices: {
+            getSupportedConstraints: () => ({}),
+            getUserMedia: async () => ({ getVideoTracks: () => [camera] })
+        } }
+    });
+    await h.join(true, "high");
+    await h.voice.connectToParticipants([
+        { connectionId: "first", name: "First" },
+        { connectionId: "second", name: "Second" }
+    ]);
+    await h.voice.setVideoEnabled(true);
+    for (const [quality, width, height, bitrate] of [
+        ["very-low", 256, 144, 100000], ["high", 1280, 720, 1500000]
+    ]) {
+        await h.voice.setVideoQuality(quality);
+        assert.equal(constraints.at(-1).height.max, height);
+        for (const connection of h.connections) {
+            const sender = connection.getSenders().find(item => item.track === camera);
+            const encoding = sender.parameters.encodings[0];
+            assert.ok(1280 / encoding.scaleResolutionDownBy <= width);
+            assert.ok(720 / encoding.scaleResolutionDownBy <= height);
+            assert.equal(encoding.maxBitrate, bitrate);
+            assert.equal(sender.parameters.degradationPreference, "maintain-resolution");
+            assert.equal(sender.transform.options.operation, "encrypt");
+        }
+    }
+    camera.applyConstraints = async () => { throw new Error("Camera constraints rejected"); };
+    await assert.rejects(h.voice.setVideoQuality("low"), /Camera constraints rejected/);
+    assert.equal(h.callbacks.filter(([method]) => method === "VideoQualityAdapted").at(-1)[1], "high");
+    h.voice.leave();
+});
+
+test("presence updates refresh participant captions without merging matching names", async () => {
+    const h = await createHarness();
+    await h.join(true);
+    await h.voice.connectToParticipants([
+        { connectionId: "first", name: "Amir" },
+        { connectionId: "second", name: "Amir" }
+    ]);
+    h.voice.updateParticipantNames([
+        { connectionId: "first", name: "Amir (session 1)" },
+        { connectionId: "second", name: "Amir (session 2)" }
+    ]);
+    assert.equal(h.connections.length, 2);
+    assert.equal(h.remoteContainer.children[1].children[2].textContent, "Amir (session 1)");
+    assert.equal(h.remoteContainer.children[3].children[2].textContent, "Amir (session 2)");
+    h.voice.leave();
+});
 
 test("loading and joining voice never load transcription code or audio processing", async () => {
     const h = await createHarness();

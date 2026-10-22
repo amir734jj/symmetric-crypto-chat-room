@@ -1,0 +1,254 @@
+<!doctype html>
+<html lang="en">
+<meta charset="utf-8">
+<title>Encrypted two-way video regression</title>
+<h1>Encrypted two-way video regression</h1>
+<pre id="results">Running with synthetic cameras and audio (no device access)...</pre>
+<script type="module">
+const clients = new Map();
+const results = document.querySelector("#results");
+const moduleUrl = new URL("../wwwroot/js/voice-chat.js", location.href).href;
+
+function check(condition, message) {
+    if (!condition) throw new Error(message);
+}
+
+async function waitUntil(predicate, message) {
+    const deadline = performance.now() + 10000;
+    while (!await predicate()) {
+        if (performance.now() > deadline) throw new Error(message);
+        await new Promise(resolve => setTimeout(resolve, 100));
+    }
+}
+
+async function createClient(id) {
+    const iframe = document.createElement("iframe");
+    iframe.width = 320;
+    iframe.height = 220;
+    document.body.append(iframe);
+    const w = iframe.contentWindow;
+    const style = w.document.createElement("style");
+    style.textContent = "video { width: 240px; height: 135px; } figure { margin: 0; }";
+    w.document.head.append(style);
+    const client = { id, iframe };
+    clients.set(id, client);
+    const nativeInterval = w.setInterval.bind(w);
+    w.setInterval = (callback, milliseconds) => milliseconds === 5000 ? 0 : nativeInterval(callback, milliseconds);
+    const NativeConnection = w.RTCPeerConnection;
+    w.RTCPeerConnection = class extends NativeConnection {
+        constructor(configuration) {
+            super({ ...configuration, iceServers: [], iceTransportPolicy: "all" });
+            client.connection = this;
+        }
+    };
+    const canvas = w.document.createElement("canvas");
+    const context = canvas.getContext("2d");
+    const screen = w.document.createElement("canvas");
+    screen.width = 640;
+    screen.height = 360;
+    const screenContext = screen.getContext("2d");
+    let frameNumber = 0;
+    function draw() {
+        context.fillStyle = id === "first" ? "#ff0000" : "#0000ff";
+        context.fillRect(0, 0, canvas.width, canvas.height);
+        context.fillStyle = "#ffffff";
+        context.font = "24px sans-serif";
+        context.fillText(`${id}: ${frameNumber++}`, 10, 30);
+        screenContext.fillStyle = id === "first" ? "#ff0000" : "#0000ff";
+        screenContext.fillRect(0, 0, screen.width, screen.height);
+        screenContext.fillStyle = "#ffffff";
+        screenContext.font = "24px sans-serif";
+        screenContext.fillText(`Screen ${id}: ${frameNumber}`, 10, 30);
+    }
+    client.timer = nativeInterval(draw, 33);
+    client.audioContext = new w.AudioContext();
+    const destination = client.audioContext.createMediaStreamDestination();
+    const oscillator = client.audioContext.createOscillator();
+    oscillator.connect(destination);
+    oscillator.start();
+    w.navigator.mediaDevices.getUserMedia = async constraints => {
+        if (!constraints.video) return destination.stream;
+        canvas.width = constraints.video.width.max;
+        canvas.height = constraints.video.height.max;
+        draw();
+        const stream = canvas.captureStream(30);
+        const track = stream.getVideoTracks()[0];
+        track.applyConstraints = async value => {
+            canvas.width = value.width.max;
+            canvas.height = value.height.max;
+            draw();
+            await waitUntil(() => track.getSettings().height === canvas.height, "Synthetic capture did not resize");
+        };
+        return stream;
+    };
+    w.navigator.mediaDevices.getDisplayMedia = async () => screen.captureStream(30);
+    client.module = await w.eval(`import(${JSON.stringify(moduleUrl)})`);
+    client.container = w.document.createElement("div");
+    const local = w.document.createElement("video");
+    local.muted = true;
+    local.style.display = "none";
+    w.document.body.append(local, client.container);
+    await client.module.initialize({
+        async invokeMethodAsync(method, target, data) {
+            const other = clients.get(target);
+            if (method === "SendVoiceOffer") await other.module.receiveOffer(id, id, data);
+            else if (method === "SendVoiceAnswer") await other.module.receiveAnswer(id, data);
+            else if (method === "SendVoiceIceCandidate") await other.module.receiveIceCandidate(id, data);
+        }
+    }, client.container, local, { username: `expiry:${id}` },
+    btoa(String.fromCharCode(...new Uint8Array(32).fill(7))), "low", "standard");
+    return client;
+}
+
+async function videoStats(client) {
+    return [...(await client.connection.getStats()).values()]
+        .filter(report => report.type === "inbound-rtp" && report.kind === "video");
+}
+
+async function assertMovingVideo() {
+    const baselines = new Map();
+    const playbackFrames = new Map();
+    for (const client of clients.values()) {
+        baselines.set(client.id, (await videoStats(client)).reduce((sum, report) => sum + report.framesDecoded, 0));
+        playbackFrames.set(client.id, 0);
+        const video = client.container.querySelector("video");
+        function renderedFrame() {
+            const count = playbackFrames.get(client.id) + 1;
+            playbackFrames.set(client.id, count);
+            if (count < 10) video.requestVideoFrameCallback(renderedFrame);
+        }
+        video.requestVideoFrameCallback(renderedFrame);
+    }
+    await waitUntil(async () => {
+        for (const client of clients.values()) {
+            const reports = await videoStats(client);
+            const decoded = reports.reduce((sum, report) => sum + report.framesDecoded, 0);
+            const keys = reports.reduce((sum, report) => sum + report.keyFramesDecoded, 0);
+            if (decoded - baselines.get(client.id) < 15 || keys >= decoded / 2) return false;
+            if (playbackFrames.get(client.id) < 10) return false;
+        }
+        return true;
+    }, "Both recipients must decode moving video, not just repeated recovery keyframes");
+    for (const client of clients.values()) {
+        const video = client.container.querySelector("video");
+        const canvas = document.createElement("canvas");
+        canvas.width = video.videoWidth;
+        canvas.height = video.videoHeight;
+        const context = canvas.getContext("2d");
+        context.drawImage(video, 0, 0);
+        const [red, green, blue] = context.getImageData(canvas.width - 10, canvas.height - 10, 1, 1).data;
+        const expectedColor = client.id === "first"
+            ? blue > 180 && red < 80 && green < 80
+            : red > 180 && blue < 80 && green < 80;
+        check(expectedColor, `${client.id} should render the other camera's pixels without corruption`);
+    }
+}
+
+async function assertAudio() {
+    const baselines = new Map();
+    for (const client of clients.values()) {
+        const reports = [...(await client.connection.getStats()).values()];
+        baselines.set(client.id, reports.filter(report => report.type === "inbound-rtp" && report.kind === "audio")
+            .reduce((sum, report) => sum + report.bytesReceived, 0));
+        const sender = client.connection.getSenders().find(item => item.track?.kind === "audio");
+        check(sender?.transform, `${client.id} microphone must remain encrypted`);
+        client.module.setMuted(true);
+        check(!sender.track.enabled, `${client.id} mute must disable the microphone`);
+        client.module.setMuted(false);
+        check(sender.track.enabled, `${client.id} unmute must enable the microphone`);
+    }
+    await waitUntil(async () => {
+        for (const client of clients.values()) {
+            const reports = [...(await client.connection.getStats()).values()];
+            const received = reports.filter(report => report.type === "inbound-rtp" && report.kind === "audio")
+                .reduce((sum, report) => sum + report.bytesReceived, 0);
+            if (received <= baselines.get(client.id)) return false;
+        }
+        return true;
+    }, "Encrypted audio must continue in both directions");
+}
+
+async function closeClients() {
+    for (const client of clients.values()) {
+        client.module?.leave();
+        client.iframe.contentWindow.clearInterval(client.timer);
+        await client.audioContext?.close();
+        client.iframe.remove();
+    }
+    clients.clear();
+}
+
+window.testResults = (async () => {
+    try {
+        const first = await createClient("first");
+        const second = await createClient("second");
+        await first.module.connectToParticipants([{ connectionId: "second", name: "second" }]);
+        await assertAudio();
+        results.textContent += "\nPASS: encrypted audio and mute/unmute work before enabling video";
+        await first.module.setVideoEnabled(true);
+        await second.module.setVideoEnabled(true);
+        await assertMovingVideo();
+        results.textContent += "\nPASS: encrypted video decodes continuously in both directions";
+        for (const [quality, height] of [["very-low", 144], ["high", 720], ["low", 240]]) {
+            for (const client of clients.values()) await client.module.setVideoQuality(quality);
+            await waitUntil(() => [...clients.values()].every(client => {
+                const video = client.container.querySelector("video");
+                return video.videoHeight === height;
+            }), `Both recipients must see ${height}p after selecting ${quality}`);
+            results.textContent += `\nPASS: both recipients see ${height}p`;
+        }
+        await first.module.setVideoEnabled(false);
+        await first.module.setVideoEnabled(true);
+        await assertMovingVideo();
+        results.textContent += "\nPASS: stopping and restarting one camera preserves two-way decoding";
+        await first.module.setVideoEnabled(false);
+        await second.module.setVideoEnabled(false);
+        await Promise.all([
+            first.module.setVideoEnabled(true),
+            second.module.setVideoEnabled(true)
+        ]);
+        await assertMovingVideo();
+        results.textContent += "\nPASS: enabling both cameras simultaneously preserves two-way decoding";
+        await first.module.setScreenSharing(true);
+        await waitUntil(() => second.container.querySelector("video").videoHeight === 360,
+            "Screen sharing must reach the other participant");
+        await assertMovingVideo();
+        await first.module.setVideoQuality("high");
+        check(second.container.querySelector("video").videoHeight === 360,
+            "Changing camera quality must not resize the shared screen");
+        await first.module.setScreenSharing(false);
+        await waitUntil(() => second.container.querySelector("video").videoHeight === 720,
+            "Stopping screen sharing must restore the camera at the selected quality");
+        await assertMovingVideo();
+        results.textContent += "\nPASS: screen sharing preserves encryption and restores the selected camera quality";
+        await first.module.setVideoEnabled(false);
+        await first.module.setScreenSharing(true);
+        await waitUntil(() => second.container.querySelector("video").videoHeight === 360,
+            "Screen sharing must work without an active camera");
+        await assertMovingVideo();
+        await first.module.setScreenSharing(false);
+        check(!first.connection.getSenders().some(sender => sender.track?.kind === "video"),
+            "Stopping a screen share started without a camera must return to audio-only");
+        await first.module.setVideoEnabled(true);
+        await assertMovingVideo();
+        await assertAudio();
+        results.textContent += "\nPASS: screen-only sharing returns to audio-only and audio survives video transitions";
+        await closeClients();
+        const rejoinedFirst = await createClient("first");
+        const rejoinedSecond = await createClient("second");
+        await rejoinedSecond.module.connectToParticipants([{ connectionId: "first", name: "first" }]);
+        await rejoinedSecond.module.setVideoEnabled(true);
+        await rejoinedFirst.module.setVideoEnabled(true);
+        await assertMovingVideo();
+        await assertAudio();
+        results.textContent += "\nPASS: leaving and rejoining with the opposite offerer restores audio and video";
+        return { passed: true, details: results.textContent };
+    } catch (error) {
+        results.textContent += `\nFAIL: ${error.stack}`;
+        return { passed: false, details: results.textContent };
+    } finally {
+        await closeClients();
+    }
+})();
+</script>
+</html>

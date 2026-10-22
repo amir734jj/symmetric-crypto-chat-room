@@ -59,6 +59,7 @@ namespace DomainLogic
                 throw new ArgumentException("SignalR client is not logged-in");
             }
             
+            message.Name = GetDisplayName(userInfo);
             _playbackLogic.RecordMessage(message);
             
             await Clients.Group(message.Channel).Inbox(message);
@@ -139,7 +140,7 @@ namespace DomainLogic
             if (PendingVoiceCalls.TryRemove(connectionId, out var callerConnectionId))
             {
                 await Clients.Client(callerConnectionId)
-                    .VoiceCallResponded(connectionId, userInfo.Name, false);
+                    .VoiceCallResponded(connectionId, GetDisplayName(userInfo), false);
             }
 
             foreach (var pendingCall in PendingVoiceCalls.Where(call => call.Value == connectionId))
@@ -167,12 +168,11 @@ namespace DomainLogic
             var participants = VoiceUsers.Keys
                 .Where(connectionId => connectionId != Context.ConnectionId)
                 .Where(connectionId => Users.TryGetValue(connectionId, out var peer) &&
-                    peer.Channel == userInfo.Channel &&
-                    !string.Equals(peer.Name, userInfo.Name, StringComparison.OrdinalIgnoreCase))
+                    peer.Channel == userInfo.Channel)
                 .Select(connectionId => new VoiceParticipant
                 {
                     ConnectionId = connectionId,
-                    Name = Users[connectionId].Name
+                    Name = GetDisplayName(Users[connectionId])
                 })
                 .ToList();
 
@@ -216,8 +216,7 @@ namespace DomainLogic
             var caller = GetCurrentUser();
             var target = GetUserInSameChannel(targetConnectionId, caller.Channel);
             Debug.Assert(target.Channel == caller.Channel);
-            if (targetConnectionId == Context.ConnectionId ||
-                string.Equals(target.Name, caller.Name, StringComparison.OrdinalIgnoreCase))
+            if (targetConnectionId == Context.ConnectionId)
             {
                 throw new HubException("Cannot ring the current user");
             }
@@ -229,7 +228,7 @@ namespace DomainLogic
 
             try
             {
-                await Clients.Client(targetConnectionId).VoiceCallReceived(Context.ConnectionId, caller.Name);
+                await Clients.Client(targetConnectionId).VoiceCallReceived(Context.ConnectionId, GetDisplayName(caller));
             }
             catch
             {
@@ -261,7 +260,7 @@ namespace DomainLogic
             }
 
             return Clients.Client(callerConnectionId)
-                .VoiceCallResponded(Context.ConnectionId, responder.Name, accepted);
+                .VoiceCallResponded(Context.ConnectionId, GetDisplayName(responder), accepted);
         }
 
         public async Task LeaveVoice()
@@ -304,11 +303,11 @@ namespace DomainLogic
         private void EnsureVoicePeer(string targetConnectionId)
         {
             var userInfo = GetCurrentUser();
-            if (!VoiceUsers.ContainsKey(Context.ConnectionId) ||
+            if (targetConnectionId == Context.ConnectionId ||
+                !VoiceUsers.ContainsKey(Context.ConnectionId) ||
                 !VoiceUsers.ContainsKey(targetConnectionId) ||
                 !Users.TryGetValue(targetConnectionId, out var target) ||
-                target.Channel != userInfo.Channel ||
-                string.Equals(target.Name, userInfo.Name, StringComparison.OrdinalIgnoreCase))
+                target.Channel != userInfo.Channel)
             {
                 throw new HubException("Voice peer is not in the same channel");
             }
@@ -360,11 +359,20 @@ namespace DomainLogic
                 .Select(x => new OnlineUser
                 {
                     ConnectionId = x.Key,
-                    Name = x.Value.Name
+                    Name = GetDisplayName(x.Value)
                 })
                 .ToList();
             
             await Clients.Group(channel).Status(type, users);
+        }
+
+        private static string GetDisplayName((string Channel, string Name, string ClientInstanceId, long JoinedOrder) user)
+        {
+            var duplicateName = Users.Values.Any(other =>
+                other.Channel == user.Channel &&
+                other.JoinedOrder != user.JoinedOrder &&
+                string.Equals(other.Name, user.Name, StringComparison.OrdinalIgnoreCase));
+            return duplicateName ? $"{user.Name} (session {user.JoinedOrder})" : user.Name;
         }
     }
 }

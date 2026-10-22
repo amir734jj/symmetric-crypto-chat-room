@@ -263,7 +263,7 @@
                 <span aria-hidden="true">&#x26F6;</span>
             </button>
             <video @ref="_localVideo" class="@($"voice-video{(_screenSharing ? string.Empty : " voice-video-local")}")" autoplay muted playsinline aria-label="@(_screenSharing ? "Your shared screen preview" : "Your camera preview")"></video>
-            <figcaption>@(_screenSharing ? "Shared screen" : State.UserInfo?.Name ?? "You") <span>(You)</span></figcaption>
+            <figcaption>@(_screenSharing ? "Shared screen" : LocalDisplayName) <span>(You)</span></figcaption>
         </figure>
         <div class="voice-remote-media" @ref="_remoteMediaContainer"></div>
     </div>
@@ -278,7 +278,7 @@
 
     [Parameter] public bool DebugMode { get; set; }
 
-    private const string VoiceModulePath = "./js/voice-chat.js?v=20261022-6";
+    private const string VoiceModulePath = "./js/voice-chat.js?v=20261022-7";
 
     private static readonly TimeSpan RingTimeout = TimeSpan.FromSeconds(30);
     private readonly HashSet<string> _participantIds = [];
@@ -332,8 +332,11 @@
     private TurnHealthStatus? _turnHealth;
 
     private IEnumerable<OnlineUser> OtherOnlineUsers => State.OnlineUsers
-        .Where(user => user.ConnectionId != SignalRStateManager.ConnectionId)
-        .Where(user => !string.Equals(user.Name, State.UserInfo?.Name, StringComparison.OrdinalIgnoreCase));
+        .Where(user => user.ConnectionId != SignalRStateManager.ConnectionId);
+
+    private string LocalDisplayName => State.OnlineUsers
+        .FirstOrDefault(user => user.ConnectionId == SignalRStateManager.ConnectionId)?.Name
+        ?? State.UserInfo?.Name ?? "You";
 
     private ThemeColor TurnHealthColor => _turnHealth switch
     {
@@ -411,7 +414,21 @@
 
     private Task PresenceChanged()
     {
-        return InvokeAsync(StateHasChanged);
+        return InvokeAsync(async () =>
+        {
+            if (_joined && _module != null)
+            {
+                try
+                {
+                    await _module.InvokeVoidAsync("updateParticipantNames", State.OnlineUsers);
+                }
+                catch (JSException exception)
+                {
+                    _error = $"Unable to update call participant names: {exception.Message}";
+                }
+            }
+            StateHasChanged();
+        });
     }
 
     private Task ConnectionReconnected()

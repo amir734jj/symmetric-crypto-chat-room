@@ -146,6 +146,13 @@ export async function connectToParticipants(participants) {
     }
 }
 
+export function updateParticipantNames(participants) {
+    for (const participant of participants) {
+        const peer = peers.get(participant.connectionId);
+        if (peer) peer.caption.textContent = participant.name;
+    }
+}
+
 export async function receiveOffer(senderConnectionId, senderName, offerJson) {
     let offer;
     try {
@@ -768,6 +775,9 @@ function sanitizeVideoStats(report, reports) {
         retransmittedPacketsSent: report.retransmittedPacketsSent,
         framesDecoded: report.framesDecoded,
         framesEncoded: report.framesEncoded,
+        frameWidth: report.frameWidth,
+        frameHeight: report.frameHeight,
+        framesPerSecond: report.framesPerSecond,
         framesDropped: report.framesDropped,
         keyFramesDecoded: report.keyFramesDecoded,
         keyFramesEncoded: report.keyFramesEncoded,
@@ -1089,8 +1099,14 @@ async function createPeer(connectionId, participantName) {
 
     connection.ontrack = event => {
         setReceiverTransform(event.receiver, connectionId, event.track.kind);
+        // A recvonly sender must be encrypted before negotiation, not when addTrack later reuses it.
+        const transceiver = connection.getTransceivers()
+            .find(candidate => candidate.receiver === event.receiver);
+        if (transceiver) setSenderTransform(transceiver.sender, connectionId, event.track.kind);
         const mediaElement = event.track.kind === "video" ? video : audio;
-        const mediaStream = mediaElement.srcObject ?? new MediaStream();
+        const mediaStream = event.track.kind === "video"
+            ? new MediaStream()
+            : mediaElement.srcObject ?? new MediaStream();
         if (!mediaStream.getTracks().includes(event.track)) {
             mediaStream.addTrack(event.track);
         }
@@ -1105,6 +1121,7 @@ async function createPeer(connectionId, participantName) {
                 console.warn("Unable to start remote video playback", error);
             });
             const updateVideoVisibility = () => {
+                if (mediaElement.srcObject !== mediaStream) return;
                 tile.hidden = mediaStream.getVideoTracks()
                     .every(track => track.muted || track.readyState === "ended");
                 if (tile.hidden && focusedVideoTile === tile) setFocusedVideoTile(undefined);
@@ -1136,19 +1153,10 @@ async function createPeer(connectionId, participantName) {
 
 function addLocalTrack(peer, track, remoteConnectionId) {
     requireMediaEncryption();
-    const transform = new RTCRtpScriptTransform(
-        encryptionWorker,
-        {
-            operation: "encrypt",
-            key: voiceKey,
-            senderId: localConnectionId,
-            mediaKind: track.kind,
-            contextId: remoteConnectionId
-        });
-
+    const transform = createSenderTransform(remoteConnectionId, track.kind);
     const sender = peer.connection.addTrack(track, localStream);
     try {
-        sender.transform = transform;
+        if (!sender.transform) sender.transform = transform;
         const transceiver = peer.connection.getTransceivers()
             .find(candidate => candidate.sender === sender);
         if (track.kind === "video") {
@@ -1160,6 +1168,18 @@ function addLocalTrack(peer, track, remoteConnectionId) {
         peer.connection.removeTrack(sender);
         throw error;
     }
+}
+
+function setSenderTransform(sender, remoteConnectionId, mediaKind) {
+    if (sender.transform) return;
+    requireMediaEncryption();
+    sender.transform = createSenderTransform(remoteConnectionId, mediaKind);
+}
+
+function createSenderTransform(remoteConnectionId, mediaKind) {
+    return new RTCRtpScriptTransform(
+        encryptionWorker,
+        { operation: "encrypt", key: voiceKey, senderId: localConnectionId, mediaKind, contextId: remoteConnectionId });
 }
 
 function requireMediaEncryption() {
@@ -1309,8 +1329,8 @@ function getAudioConstraints() {
     return constraints;
 }
 
-function getVideoConstraints() {
-    const profile = videoQualityProfiles[videoQuality];
+function getVideoConstraints(quality = videoQuality) {
+    const profile = videoQualityProfiles[quality];
     return {
         width: { ideal: profile.width, max: profile.width },
         height: { ideal: profile.height, max: profile.height },
@@ -1344,15 +1364,20 @@ async function applySenderVideoQuality(sender) {
         : videoQualityProfiles[videoQuality];
     const parameters = sender.getParameters();
     const bitrate = Math.min(profile.maxBitrate, senderVideoBudgets.get(sender) ?? profile.maxBitrate);
+    const settings = sender.track?.getSettings?.();
+    const captureScale = !sharingScreen && settings?.width && settings?.height
+        ? Math.max(1, settings.width / profile.width, settings.height / profile.height)
+        : 1;
     if (!parameters.encodings?.length) {
         parameters.encodings = [{}];
     }
     for (const encoding of parameters.encodings) {
         encoding.maxBitrate = bitrate;
         encoding.maxFramerate = Math.min(profile.frameRate, bitrate < 100000 ? 5 : bitrate < 200000 ? 10 : profile.frameRate);
-        encoding.scaleResolutionDownBy = sharingScreen ? 1 : Math.min(4, Math.max(1, Math.sqrt(profile.maxBitrate / bitrate)));
+        encoding.scaleResolutionDownBy = sharingScreen ? 1
+            : captureScale * Math.min(4, Math.max(1, Math.sqrt(profile.maxBitrate / bitrate)));
     }
-    parameters.degradationPreference = sharingScreen ? "maintain-resolution" : "balanced";
+    parameters.degradationPreference = "maintain-resolution";
     await sender.setParameters(parameters);
 }
 
@@ -1495,28 +1520,23 @@ function notifyAudioQualityChanged() {
 }
 
 export async function setVideoQuality(selectedVideoQuality) {
-    videoQualityMode = normalizeVideoQualityMode(selectedVideoQuality);
+    const mode = normalizeVideoQualityMode(selectedVideoQuality);
     goodVideoNetworkSamples = 0;
     poorVideoNetworkSamples = 0;
-    await setEffectiveVideoQuality(videoQualityMode === "auto" ? "standard" : videoQualityMode);
+    await setEffectiveVideoQuality(mode === "auto" ? "standard" : mode);
+    videoQualityMode = mode;
     return videoQuality;
 }
 
 async function setEffectiveVideoQuality(selectedVideoQuality) {
     const normalizedQuality = normalizeVideoQuality(selectedVideoQuality);
     const qualityChanged = videoQuality !== normalizedQuality;
-    videoQuality = normalizedQuality;
-
     if (localStream) {
-        const constraintResults = await Promise.allSettled(localStream.getVideoTracks()
+        await Promise.all(localStream.getVideoTracks()
             .filter(track => track === cameraTrack)
-            .map(track => track.applyConstraints(getVideoConstraints())));
-        for (const result of constraintResults) {
-            if (result.status === "rejected") {
-                console.warn("Unable to change camera capture quality without restarting the track", result.reason);
-            }
-        }
+            .map(track => track.applyConstraints(getVideoConstraints(normalizedQuality))));
     }
+    videoQuality = normalizedQuality;
 
     const senderResults = await Promise.allSettled([...peers.values()]
         .flatMap(peer => peer.connection.getSenders())

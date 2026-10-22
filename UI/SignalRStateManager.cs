@@ -298,7 +298,6 @@ public sealed class SignalRStateManager : AuthenticationStateProvider, IDisposab
         _state.OnlineUsers = users;
         _state.Names = users
             .Select(user => user.Name)
-            .Distinct(StringComparer.OrdinalIgnoreCase)
             .ToList();
 
         if (PresenceChanged != null)
