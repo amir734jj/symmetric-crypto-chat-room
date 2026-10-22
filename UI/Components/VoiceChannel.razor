@@ -96,7 +96,7 @@
                 {
                     <label class="voice-quality voice-transcription-model">
                         <span>Transcription model</span>
-                        <select class="form-select form-select-sm" @bind="_transcriptionModel" disabled="@(_busy || _transcriptionEnabled)">
+                        <select class="form-select form-select-sm" @bind="_transcriptionModel" disabled="@(_busy || _transcriptionEnabled)" aria-describedby="transcription-download-warning">
                             <option value="auto">Default (Auto) - Recommended: @TranscriptionModelLabel(_recommendedTranscriptionModel)</option>
                             <option value="tiny">Multilingual Tiny - Fastest, least accurate</option>
                             <option value="base">Multilingual Base - More accurate, slower</option>
@@ -105,6 +105,7 @@
                             <option value="base-en">English Base - More accurate English, slower</option>
                             <option value="small-en">English Small - Most accurate English, slowest</option>
                         </select>
+                        <small id="transcription-download-warning" class="text-muted">Enabling transcription downloads large model files unless already cached. Wi-Fi recommended.</small>
                     </label>
                     <HxButton Color="ThemeColor.Secondary" Enabled="@(!_busy && (_transcriptionEnabled || _participantIds.Count > 0))" OnClick="ToggleTranscription">
                         @(_transcriptionEnabled ? "Stop transcription" : "Start transcription")
@@ -252,7 +253,7 @@
 </section>
 
 @code {
-    private const string VoiceModulePath = "./js/voice-chat.js?v=20260913-1";
+    private const string VoiceModulePath = "./js/voice-chat.js?v=20261022-2";
 
     private static readonly TimeSpan RingTimeout = TimeSpan.FromSeconds(30);
     private readonly HashSet<string> _participantIds = [];
@@ -297,6 +298,9 @@
     private string _effectiveAudioQuality = "standard";
     private string _videoQuality = "auto";
     private string _effectiveVideoQuality = "standard";
+    private Task? _qualityDefaultsTask;
+    private bool _audioQualitySelected;
+    private bool _videoQualitySelected;
     private string _audioOutputMode = "auto";
     private string _transcriptionModel = "auto";
     private string _recommendedTranscriptionModel = "tiny";
@@ -339,6 +343,39 @@
         SignalRStateManager.PresenceChanged += PresenceChanged;
     }
 
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (!firstRender) return;
+
+        try
+        {
+            await EnsureQualityDefaults();
+        }
+        catch (JSException exception)
+        {
+            _error = $"Unable to detect default media quality: {exception.Message}";
+        }
+        StateHasChanged();
+    }
+
+    private Task EnsureQualityDefaults() => _qualityDefaultsTask ??= ApplyQualityDefaults();
+
+    private async Task ApplyQualityDefaults()
+    {
+        await using var defaults = await Js.InvokeAsync<IJSObjectReference>("import", "./js/media-defaults.js");
+        var quality = await defaults.InvokeAsync<string>("getDefaultMediaQuality");
+        if (!_audioQualitySelected)
+        {
+            _audioQuality = quality;
+            _effectiveAudioQuality = quality == "auto" ? "standard" : quality;
+        }
+        if (!_videoQualitySelected)
+        {
+            _videoQuality = quality;
+            _effectiveVideoQuality = quality == "auto" ? "standard" : quality;
+        }
+    }
+
     private Task PresenceChanged()
     {
         return InvokeAsync(StateHasChanged);
@@ -363,6 +400,7 @@
 
         try
         {
+            await EnsureQualityDefaults();
             _module ??= await Js.InvokeAsync<IJSObjectReference>("import", VoiceModulePath);
             _reference ??= DotNetObjectReference.Create(this);
 
@@ -590,6 +628,7 @@
 
     private async Task AudioQualityChanged()
     {
+        _audioQualitySelected = true;
         if (_joined && _module != null)
         {
             try
@@ -606,6 +645,7 @@
 
     private async Task VideoQualityChanged()
     {
+        _videoQualitySelected = true;
         if (_joined && _module != null)
         {
             try

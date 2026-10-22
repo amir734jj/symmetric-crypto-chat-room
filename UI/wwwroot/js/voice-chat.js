@@ -1,3 +1,5 @@
+import { isMobileDevice } from "./media-defaults.js";
+
 let dotNetReference;
 let remoteMediaContainer;
 let localVideoElement;
@@ -31,27 +33,10 @@ let selectedAudioOutputId = "";
 let audioOutputMode = "auto";
 let proximitySensor;
 let proximitySensorNear;
-let transcriptionWorker;
-let transcriptionContext;
-let transcriptionProcessor;
-let transcriptionSink;
-let transcriptionEnabled = false;
-let transcriptionBusy = false;
-let transcriptionSamples = [];
-let transcriptionSampleCount = 0;
+let transcription;
+let transcriptionRequestId = 0;
 const peers = new Map();
 const liveDataRateSamples = new Map();
-const transcriptionSources = new Map();
-const transcriptionSampleRate = 16000;
-const transcriptionWindowSamples = transcriptionSampleRate * 6;
-const transcriptionModels = new Set([
-    "tiny",
-    "base",
-    "small",
-    "tiny-en",
-    "base-en",
-    "small-en"
-]);
 const audioQualityProfiles = {
     low: { sampleRate: 16000, maxBitrate: 16000 },
     standard: { sampleRate: 32000, maxBitrate: 32000 },
@@ -222,10 +207,7 @@ export function supportsScreenSharing() {
 }
 
 export function supportsMobileScreenWakeLock() {
-    const isMobile = navigator.userAgentData?.mobile === true ||
-        /Android|iPhone|iPad|iPod|Mobile/i.test(navigator.userAgent) ||
-        (navigator.platform === "MacIntel" && navigator.maxTouchPoints > 1);
-    return isMobile && "wakeLock" in navigator;
+    return isMobileDevice() && "wakeLock" in navigator;
 }
 
 export async function setKeepScreenOn(enabled) {
@@ -260,7 +242,7 @@ async function ensureLocalAudio() {
         audioTrack.enabled = !audioMuted;
         targetStream.addTrack(audioTrack);
         if ("audioSession" in navigator) setAudioOutputMode("auto");
-        if (transcriptionEnabled) {
+        if (transcription?.isEnabled()) {
             disconnectTranscriptionStream("local");
             connectTranscriptionStream("local", targetStream);
         }
@@ -275,7 +257,7 @@ async function ensureLocalAudio() {
 function stopLocalAudioIfAlone() {
     if (!localStream || peers.size > 0) return;
 
-    if (transcriptionEnabled) {
+    if (transcription?.isEnabled()) {
         stopTranscription();
         dotNetReference?.invokeMethodAsync(
             "TranscriptionStopped",
@@ -530,7 +512,7 @@ export function getRecommendedTranscriptionModel() {
 
 export async function setTranscriptionEnabled(enabled, selectedModel = "auto") {
     if (enabled) {
-        if (transcriptionEnabled) return true;
+        if (transcription?.isEnabled()) return true;
         if (!localStream?.getAudioTracks().some(track => track.readyState === "live")) {
             throw new Error("Connect to another participant before starting transcription");
         }
@@ -538,36 +520,26 @@ export async function setTranscriptionEnabled(enabled, selectedModel = "auto") {
             throw new Error("Live transcription is not supported by this browser");
         }
 
-        transcriptionEnabled = true;
-        transcriptionWorker = new Worker(
-            new URL("./transcription-worker.js?version=whisper-model-selector-v2", import.meta.url),
-            { type: "module" });
-        transcriptionWorker.onmessage = handleTranscriptionWorkerMessage;
-        transcriptionWorker.onerror = event => {
-            notifyTranscriptionStatus(`Transcription stopped: ${event.message || "worker error"}`, true);
-            stopTranscription();
-        };
-        transcriptionWorker.postMessage({
-            type: "initialize",
-            model: normalizeTranscriptionModel(selectedModel)
-        });
-
-        const AudioContextType = window.AudioContext || window.webkitAudioContext;
-        transcriptionContext = new AudioContextType();
-        await transcriptionContext.resume();
-        transcriptionProcessor = transcriptionContext.createScriptProcessor(4096, 1, 1);
-        transcriptionProcessor.onaudioprocess = collectTranscriptionAudio;
-        transcriptionSink = transcriptionContext.createGain();
-        transcriptionSink.gain.value = 0;
-        transcriptionProcessor.connect(transcriptionSink);
-        transcriptionSink.connect(transcriptionContext.destination);
-
-        connectTranscriptionStream("local", localStream);
-        for (const [connectionId, peer] of peers) {
-            if (peer.audio.srcObject) connectTranscriptionStream(connectionId, peer.audio.srcObject);
+        const requestId = ++transcriptionRequestId;
+        const module = await import("./voice-transcription.js");
+        if (requestId !== transcriptionRequestId) return false;
+        transcription = module;
+        if (!localStream?.getAudioTracks().some(track => track.readyState === "live")) {
+            throw new Error("Connect to another participant before starting transcription");
         }
-        notifyTranscriptionStatus("Preparing on-device transcription model...", false);
-        return true;
+        const model = ["tiny", "base", "small", "tiny-en", "base-en", "small-en"].includes(selectedModel)
+            ? selectedModel
+            : getRecommendedTranscriptionModel();
+        return transcription.start(
+            dotNetReference,
+            model,
+            () => {
+                const streams = new Map([["local", localStream]]);
+                for (const [connectionId, peer] of peers) {
+                    if (peer.audio.srcObject) streams.set(connectionId, peer.audio.srcObject);
+                }
+                return streams;
+            });
     }
 
     stopTranscription();
@@ -575,113 +547,16 @@ export async function setTranscriptionEnabled(enabled, selectedModel = "auto") {
 }
 
 function connectTranscriptionStream(id, stream) {
-    if (!transcriptionEnabled || !transcriptionContext || !transcriptionProcessor ||
-        transcriptionSources.has(id) || stream.getAudioTracks().length === 0) return;
-
-    const source = transcriptionContext.createMediaStreamSource(stream);
-    source.connect(transcriptionProcessor);
-    transcriptionSources.set(id, source);
+    transcription?.connectStream(id, stream);
 }
 
 function disconnectTranscriptionStream(id) {
-    transcriptionSources.get(id)?.disconnect();
-    transcriptionSources.delete(id);
-}
-
-function collectTranscriptionAudio(event) {
-    if (!transcriptionEnabled) return;
-
-    const samples = resampleAudio(
-        event.inputBuffer.getChannelData(0),
-        event.inputBuffer.sampleRate,
-        transcriptionSampleRate);
-    transcriptionSamples.push(samples);
-    transcriptionSampleCount += samples.length;
-    if (!transcriptionBusy && transcriptionSampleCount >= transcriptionWindowSamples) {
-        sendTranscriptionWindow();
-    }
-
-    const maximumBufferedSamples = transcriptionWindowSamples * 2;
-    while (transcriptionSampleCount > maximumBufferedSamples && transcriptionSamples.length > 1) {
-        transcriptionSampleCount -= transcriptionSamples.shift().length;
-    }
-}
-
-function sendTranscriptionWindow() {
-    if (!transcriptionWorker || transcriptionBusy || transcriptionSampleCount === 0) return;
-
-    const audio = new Float32Array(transcriptionSampleCount);
-    let offset = 0;
-    for (const samples of transcriptionSamples) {
-        audio.set(samples, offset);
-        offset += samples.length;
-    }
-    transcriptionSamples = [];
-    transcriptionSampleCount = 0;
-    const rootMeanSquare = Math.sqrt(
-        audio.reduce((sum, sample) => sum + sample * sample, 0) / audio.length);
-    if (rootMeanSquare < 0.005) return;
-
-    transcriptionBusy = true;
-    transcriptionWorker.postMessage({ type: "transcribe", audio }, [audio.buffer]);
-}
-
-function resampleAudio(input, inputSampleRate, outputSampleRate) {
-    if (inputSampleRate === outputSampleRate) return new Float32Array(input);
-
-    const ratio = inputSampleRate / outputSampleRate;
-    const output = new Float32Array(Math.floor(input.length / ratio));
-    for (let index = 0; index < output.length; index++) {
-        const inputIndex = index * ratio;
-        const lowerIndex = Math.floor(inputIndex);
-        const upperIndex = Math.min(lowerIndex + 1, input.length - 1);
-        const weight = inputIndex - lowerIndex;
-        output[index] = input[lowerIndex] * (1 - weight) + input[upperIndex] * weight;
-    }
-    return output;
-}
-
-function handleTranscriptionWorkerMessage(event) {
-    if (!transcriptionEnabled) return;
-
-    const message = event.data;
-    if (message?.type === "result") {
-        transcriptionBusy = false;
-        if (message.text) {
-            dotNetReference?.invokeMethodAsync("TranscriptionTextReceived", message.text).catch(() => {});
-        }
-        if (transcriptionSampleCount >= transcriptionWindowSamples) sendTranscriptionWindow();
-    } else if (message?.type === "status") {
-        notifyTranscriptionStatus(message.message, false);
-    } else if (message?.type === "error") {
-        transcriptionBusy = false;
-        notifyTranscriptionStatus(`Transcription stopped: ${message.message}`, true);
-        stopTranscription();
-    }
-}
-
-function notifyTranscriptionStatus(message, failed) {
-    dotNetReference?.invokeMethodAsync("TranscriptionStatusChanged", message, failed).catch(() => {});
+    transcription?.disconnectStream(id);
 }
 
 function stopTranscription() {
-    transcriptionEnabled = false;
-    transcriptionBusy = false;
-    transcriptionSamples = [];
-    transcriptionSampleCount = 0;
-    for (const source of transcriptionSources.values()) source.disconnect();
-    transcriptionSources.clear();
-    if (transcriptionProcessor) {
-        transcriptionProcessor.onaudioprocess = null;
-        transcriptionProcessor.disconnect();
-    }
-    transcriptionSink?.disconnect();
-    transcriptionContext?.close().catch(() => {});
-    transcriptionWorker?.terminate();
-    transcriptionProcessor = undefined;
-    transcriptionSink = undefined;
-    transcriptionContext = undefined;
-    transcriptionWorker = undefined;
+    transcriptionRequestId++;
+    transcription?.stop();
 }
 
 export async function chooseAudioOutput() {
@@ -1561,9 +1436,4 @@ async function setEffectiveVideoQuality(selectedVideoQuality) {
 
 function notifyVideoQualityChanged() {
     dotNetReference?.invokeMethodAsync("VideoQualityAdapted", videoQuality).catch(() => {});
-}
-
-function normalizeTranscriptionModel(model) {
-    if (model === "auto") return getRecommendedTranscriptionModel();
-    return transcriptionModels.has(model) ? model : getRecommendedTranscriptionModel();
 }
