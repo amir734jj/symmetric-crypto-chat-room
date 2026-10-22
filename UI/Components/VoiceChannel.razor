@@ -43,6 +43,13 @@
                 <HxButton Color="ThemeColor.Secondary" OnClick="ToggleMute">
                     @(_muted ? "Unmute" : "Mute")
                 </HxButton>
+                @if (_screenWakeLockSupported)
+                {
+                    <div class="form-check form-switch voice-keep-awake">
+                        <input id="keep-screen-on" class="form-check-input" type="checkbox" role="switch" @bind="_keepScreenOn" @bind:after="KeepScreenOnChanged" />
+                        <label class="form-check-label" for="keep-screen-on">Keep screen on</label>
+                    </div>
+                }
                 <HxButton Color="ThemeColor.Secondary" Enabled="@(!_busy && !_screenSharing)" OnClick="ToggleVideo">
                     @(_videoEnabled ? "Stop video" : "Start video")
                 </HxButton>
@@ -93,13 +100,6 @@
                         <option value="high">High (720p)</option>
                     </select>
                 </label>
-                @if (_joined && _screenWakeLockSupported)
-                {
-                    <div class="form-check form-switch voice-keep-awake">
-                        <input id="keep-screen-on" class="form-check-input" type="checkbox" role="switch" @bind="_keepScreenOn" @bind:after="KeepScreenOnChanged" />
-                        <label class="form-check-label" for="keep-screen-on">Keep screen on</label>
-                    </div>
-                }
                 @if (_joined && !_usesAudioSessionOutputModes && !_audioOutputSelectionSupported)
                 {
                     <span class="text-muted">Audio output is managed by your browser. Speaker and earpiece selection is unavailable.</span>
