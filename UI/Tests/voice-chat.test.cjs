@@ -13,11 +13,21 @@ async function createHarness(options = {}) {
     const streams = [];
     const callbacks = [];
     const connections = [];
+    const documentListeners = new Map();
+    const connectionListeners = new Map();
+    const networkConnection = options.navigator?.connection;
+    if (networkConnection) {
+        networkConnection.addEventListener = (name, callback) => connectionListeners.set(name, callback);
+        networkConnection.removeEventListener = name => connectionListeners.delete(name);
+    }
     let adaptQuality;
     function createElement() {
         return {
             children: [],
             appendChild(child) { this.children.push(child); },
+            classList: { toggle() {} },
+            closest() { return null; },
+            play() { return Promise.resolve(); },
             setAttribute() {},
             addEventListener() {},
             remove() { this.removed = true; }
@@ -29,18 +39,23 @@ async function createHarness(options = {}) {
             return Promise.resolve();
         }
     };
+    const documentState = {
+        visibilityState: "visible", createElement,
+        addEventListener(name, listener) { documentListeners.set(name, listener); },
+        removeEventListener(name) { documentListeners.delete(name); }
+    };
     const scope = vm.createContext({
-        URL, console, TextEncoder, atob, btoa, crypto: webcrypto,
+        URL, console: options.console ?? console, TextEncoder, atob, btoa, crypto: webcrypto,
         setInterval(callback) { adaptQuality = callback; return 1; },
         clearInterval() {},
-        document: { addEventListener() {}, removeEventListener() {}, createElement },
+        document: documentState,
         navigator: {
             deviceMemory: 8, hardwareConcurrency: 8,
             mediaDevices: { getSupportedConstraints: () => ({}) },
             ...options.navigator
         },
         window: {
-            RTCRtpScriptTransform: class {},
+            ...(options.transformSupported === false ? {} : { RTCRtpScriptTransform: class {} }),
             Worker: class {},
             AudioContext: class {
                 constructor() {
@@ -83,8 +98,8 @@ async function createHarness(options = {}) {
             terminate() { this.terminated = true; }
         },
         MediaStream: class {
-            constructor() {
-                this.tracks = [];
+            constructor(tracks = []) {
+                this.tracks = [...tracks];
                 streams.push(this);
             }
             getTracks() { return this.tracks; }
@@ -94,27 +109,46 @@ async function createHarness(options = {}) {
             removeTrack(track) { this.tracks = this.tracks.filter(item => item !== track); }
         },
         RTCRtpScriptTransform: class {
-            constructor(worker, options) { this.options = options; }
+            constructor(worker, transformOptions) {
+                if (options.failTransformConstruction) throw new Error("Encryption transform unavailable");
+                this.options = transformOptions;
+            }
         },
         RTCPeerConnection: class {
             constructor() {
                 this.transceivers = [];
+                this.connectionState = "connected";
+                this.stats = new Map();
                 connections.push(this);
             }
+            getStats() { return Promise.resolve(this.stats); }
             addTrack(track) {
                 const sender = {
                     track,
-                    getParameters: () => ({}),
+                    getParameters() { return this.parameters ?? {}; },
                     setParameters(parameters) {
                         this.parameters = parameters;
                         return Promise.resolve();
+                    },
+                    replaceTrack(replacement) {
+                        this.track = replacement;
+                        return Promise.resolve();
                     }
                 };
+                let transform;
+                Object.defineProperty(sender, "transform", {
+                    get() { return transform; },
+                    set(value) {
+                        if (options.failTransformAssignment) throw new Error("Encryption transform assignment failed");
+                        transform = value;
+                    }
+                });
                 this.transceivers.push({ sender, receiver: {} });
                 return sender;
             }
             getTransceivers() { return this.transceivers; }
             getSenders() { return this.transceivers.map(item => item.sender); }
+            removeTrack(sender) { sender.track = null; }
             createOffer() { return Promise.resolve({ type: "offer", sdp: "test" }); }
             setLocalDescription(description) {
                 this.localDescription = description;
@@ -139,8 +173,8 @@ async function createHarness(options = {}) {
             }
         });
         await module.link(specifier => {
-            assert.equal(specifier, "./media-defaults.js");
-            return load(path.resolve(path.dirname(filename), specifier));
+            assert.match(specifier, /^\.\/media-defaults\.js(?:\?v=[\w-]+)?$/);
+            return load(path.resolve(path.dirname(filename), specifier.split("?")[0]));
         });
         await module.evaluate();
         return module;
@@ -149,7 +183,7 @@ async function createHarness(options = {}) {
     const voice = module.namespace;
     async function join(withAudio = false, quality = "auto") {
         await voice.initialize(
-            reference, createElement(), null, { username: "expiry:local", host: "localhost" },
+            reference, createElement(), createElement(), { username: "expiry:local", host: "localhost" },
             Buffer.alloc(32, 1).toString("base64"), quality, quality);
         if (withAudio) {
             streams[0].addTrack({
@@ -164,7 +198,14 @@ async function createHarness(options = {}) {
         __dirname, "..", "wwwroot", "js", "media-defaults.js"))).namespace;
     return {
         voice, defaults, imports, workers, contexts, streams, callbacks, connections, join,
-        adaptQuality: () => adaptQuality()
+        adaptQuality: () => adaptQuality(),
+        networkChanged: () => connectionListeners.get("change")?.(),
+        connectionListeners, documentListeners,
+        async visibilityChanged(state) {
+            documentState.visibilityState = state;
+            documentListeners.get("visibilitychange")?.();
+            await new Promise(setImmediate);
+        }
     };
 }
 
@@ -484,11 +525,11 @@ test("the worker retains all six quantized on-device models and lazy runtime loa
 });
 
 for (const [device, navigator, quality] of [
-    ["Android", { userAgent: "Mozilla/5.0 (Linux; Android 14)" }, "low"],
-    ["iPhone", { userAgent: "Mozilla/5.0 (iPhone; CPU iPhone OS 18_0)" }, "low"],
-    ["iPad", { userAgent: "Mozilla/5.0 (iPad; CPU OS 18_0)" }, "low"],
-    ["desktop-mode iPad", { userAgent: "Mozilla/5.0 (Macintosh)", platform: "MacIntel", maxTouchPoints: 5 }, "low"],
-    ["client hints mobile", { userAgentData: { mobile: true } }, "low"],
+    ["Android", { userAgent: "Mozilla/5.0 (Linux; Android 14)" }, "very-low"],
+    ["iPhone", { userAgent: "Mozilla/5.0 (iPhone; CPU iPhone OS 18_0)" }, "very-low"],
+    ["iPad", { userAgent: "Mozilla/5.0 (iPad; CPU OS 18_0)" }, "very-low"],
+    ["desktop-mode iPad", { userAgent: "Mozilla/5.0 (Macintosh)", platform: "MacIntel", maxTouchPoints: 5 }, "very-low"],
+    ["client hints mobile", { userAgentData: { mobile: true } }, "very-low"],
     ["Windows desktop", { userAgent: "Mozilla/5.0 (Windows NT 10.0)", maxTouchPoints: 0 }, "auto"],
     ["touchscreen Windows laptop", { userAgent: "Mozilla/5.0 (Windows NT 10.0)", maxTouchPoints: 10 }, "auto"],
     ["Mac desktop", { userAgent: "Mozilla/5.0 (Macintosh)", platform: "MacIntel", maxTouchPoints: 0 }, "auto"]
@@ -500,25 +541,25 @@ for (const [device, navigator, quality] of [
         assert.equal(h.contexts.length, 0);
         await h.join(true, quality);
         assert.ok(h.callbacks.some(([method, value]) =>
-            method === "AudioQualityAdapted" && value === (quality === "auto" ? "standard" : "low")));
+            method === "AudioQualityAdapted" && value === (quality === "auto" ? "standard" : "very-low")));
         assert.ok(h.callbacks.some(([method, value]) =>
-            method === "VideoQualityAdapted" && value === (quality === "auto" ? "standard" : "low")));
+            method === "VideoQualityAdapted" && value === (quality === "auto" ? "standard" : "very-low")));
         h.voice.leave();
     });
 }
 
-test("mobile Low caps actual senders and preserves manual quality overrides", async () => {
+test("mobile Very Low caps actual senders from the start and preserves manual quality overrides", async () => {
     const h = await createHarness({ navigator: { userAgent: "iPhone" } });
     await h.join(true, h.defaults.getDefaultMediaQuality());
     h.streams[0].addTrack({ kind: "video", readyState: "live", stop() {} });
     await h.voice.connectToParticipants([{ connectionId: "remote", name: "Remote" }]);
     const [audio, video] = h.connections[0].getSenders();
-    assert.equal(audio.parameters.encodings[0].maxBitrate, 16000);
-    assert.equal(video.parameters.encodings[0].maxBitrate, 250000);
-    assert.equal(video.parameters.encodings[0].maxFramerate, 15);
+    assert.equal(audio.parameters.encodings[0].maxBitrate, 12000);
+    assert.equal(video.parameters.encodings[0].maxBitrate, 100000);
+    assert.equal(video.parameters.encodings[0].maxFramerate, 8);
     for (let tick = 0; tick < 6; tick++) await h.adaptQuality();
-    assert.equal(audio.parameters.encodings[0].maxBitrate, 16000);
-    assert.equal(video.parameters.encodings[0].maxBitrate, 250000);
+    assert.equal(audio.parameters.encodings[0].maxBitrate, 12000);
+    assert.equal(video.parameters.encodings[0].maxBitrate, 100000);
     assert.equal(await h.voice.setAudioQuality("high"), "high");
     assert.equal(await h.voice.setVideoQuality("high"), "high");
     assert.equal(audio.parameters.encodings[0].maxBitrate, 64000);
@@ -530,3 +571,424 @@ test("mobile Low caps actual senders and preserves manual quality overrides", as
     assert.deepEqual(h.imports, []);
     h.voice.leave();
 });
+
+for (const [name, connection, allowed] of [
+    ["Data Saver", { saveData: true, effectiveType: "4g", downlink: 10 }, false],
+    ["slow 2G", { effectiveType: "slow-2g" }, false],
+    ["2G", { effectiveType: "2g" }, false],
+    ["3G", { effectiveType: "3g", downlink: 2 }, false],
+    ["slow 4G", { effectiveType: "4g", downlink: 1.49 }, false],
+    ["offline estimate", { downlink: 0 }, false],
+    ["threshold 4G", { effectiveType: "4g", downlink: 1.5 }, true],
+    ["fast Wi-Fi", { effectiveType: "4g", downlink: 20 }, true],
+    ["missing network estimates", {}, true]
+]) {
+    test(`mobile transcription availability: ${name}`, async () => {
+        const h = await createHarness({ navigator: { userAgent: "Android", connection } });
+        assert.equal(h.voice.supportsLiveTranscription(), allowed);
+        await h.join(true, "low");
+        if (!allowed) {
+            await assert.rejects(h.voice.setTranscriptionEnabled(true), /low-bandwidth mobile/);
+            assert.deepEqual(h.imports, []);
+            assert.equal(h.contexts.length, 0);
+        }
+        h.voice.leave();
+    });
+}
+
+test("unknown mobile connection API and desktop Data Saver preserve transcription availability", async () => {
+    for (const navigator of [
+        { userAgent: "iPhone" },
+        { userAgent: "Windows NT", connection: { saveData: true, effectiveType: "2g", downlink: 0.1 } }
+    ]) {
+        const h = await createHarness({ navigator });
+        assert.equal(h.voice.supportsLiveTranscription(), true);
+    }
+});
+
+test("connection changes update transcription availability while keeping an active session stoppable", async () => {
+    const connection = { downlink: 10, effectiveType: "4g" };
+    const h = await createHarness({ navigator: { userAgent: "Android", connection } });
+    await h.join(true, "low");
+    await h.voice.setTranscriptionEnabled(true);
+    connection.downlink = 0.5;
+    h.networkChanged();
+    assert.ok(h.callbacks.some(([method, available]) =>
+        method === "TranscriptionAvailabilityChanged" && available === false));
+    assert.notEqual(h.workers[1].terminated, true);
+    assert.equal(await h.voice.setTranscriptionEnabled(false), false);
+    assert.equal(h.workers[1].terminated, true);
+    connection.downlink = 5;
+    h.networkChanged();
+    assert.ok(h.callbacks.some(([method, available, recommendedModel]) =>
+        method === "TranscriptionAvailabilityChanged" && available === true && recommendedModel === "base"));
+    h.voice.leave();
+    assert.equal(h.connectionListeners.size, 0);
+});
+
+test("a connection becoming slow during the lazy import prevents model and worker downloads", async () => {
+    const connection = { downlink: 10 };
+    const h = await createHarness({
+        navigator: { userAgent: "Android", connection },
+        beforeImport() { connection.downlink = 0.5; }
+    });
+    await h.join(true, "low");
+    await assert.rejects(h.voice.setTranscriptionEnabled(true), /no longer supports/);
+    assert.equal(h.workers.length, 1);
+    assert.equal(h.contexts.length, 0);
+    h.voice.leave();
+});
+
+test("unsupported encryption prevents joining before any worker or media stream is created", async () => {
+    const h = await createHarness({ transformSupported: false });
+    await assert.rejects(h.join(), /does not support password-encrypted WebRTC/);
+    assert.equal(h.workers.length, 0);
+    assert.equal(h.streams.length, 0);
+    assert.equal(h.connections.length, 0);
+});
+
+test("encryption transform construction failure never attaches a media sender", async () => {
+    const h = await createHarness({ failTransformConstruction: true });
+    await h.join(true, "very-low");
+    await assert.rejects(
+        h.voice.connectToParticipants([{ connectionId: "remote", name: "Remote" }]),
+        /Encryption transform unavailable/);
+    assert.equal(h.connections[0].getSenders().length, 0);
+    assert.ok(!h.callbacks.some(([method]) => method === "SendVoiceOffer"));
+    h.voice.leave();
+});
+
+test("encryption transform assignment failure detaches the track instead of falling back", async () => {
+    const h = await createHarness({ failTransformAssignment: true });
+    await h.join(true, "very-low");
+    await assert.rejects(
+        h.voice.connectToParticipants([{ connectionId: "remote", name: "Remote" }]),
+        /Encryption transform assignment failed/);
+    assert.ok(h.connections[0].getSenders().every(sender => sender.track === null));
+    assert.ok(!h.callbacks.some(([method]) => method === "SendVoiceOffer"));
+    h.voice.leave();
+});
+
+test("a mismatched media password is rejected before capturing audio or negotiating a connection", async () => {
+    const h = await createHarness();
+    await h.join();
+    await assert.rejects(h.voice.receiveOffer("remote", "Remote", JSON.stringify({
+        description: { type: "offer", sdp: "test" },
+        mediaKeyConfirmation: "different-password"
+    })), /different passwords/);
+    assert.equal(h.connections.length, 0);
+    assert.equal(h.streams[0].getAudioTracks().length, 0);
+    assert.ok(h.callbacks.some(([method, , answer]) =>
+        method === "SendVoiceAnswer" && JSON.parse(answer).error === "mediaKeyMismatch"));
+    h.voice.leave();
+});
+
+test("video quality reductions leave every sender's encryption transform intact", async () => {
+    const h = await startVideoHarness("very-low");
+    const senders = h.connections.flatMap(connection => connection.getSenders());
+    const transforms = senders.map(sender => sender.transform);
+    h.connections[0].stats = videoNetworkStats(80000, 0.2);
+    await h.adaptQuality();
+    senders.forEach((sender, index) => {
+        assert.equal(sender.transform, transforms[index]);
+        assert.equal(sender.transform.options.operation, "encrypt");
+    });
+    assert.equal(h.connections[0].getSenders()[1].parameters.encodings[0].maxBitrate, 50000);
+    h.voice.leave();
+});
+
+test("screen sharing and camera restoration preserve the existing video encryption transform", async () => {
+    const camera = { kind: "video", readyState: "live", stop() {}, addEventListener() {}, applyConstraints: () => Promise.resolve() };
+    const screen = { kind: "video", readyState: "live", stop() {}, addEventListener() {} };
+    const h = await createHarness({
+        navigator: {
+            mediaDevices: {
+                getSupportedConstraints: () => ({}),
+                getUserMedia: async () => ({ getVideoTracks: () => [camera] }),
+                getDisplayMedia: async () => ({ getVideoTracks: () => [screen] })
+            }
+        }
+    });
+    await h.join(true, "very-low");
+    await h.voice.setVideoEnabled(true);
+    await h.voice.connectToParticipants([{ connectionId: "remote", name: "Remote" }]);
+    const sender = h.connections[0].getSenders()[1];
+    const transform = sender.transform;
+    await h.voice.setScreenSharing(true);
+    assert.equal(sender.track, screen);
+    assert.equal(sender.transform, transform);
+    assert.equal(sender.transform.options.operation, "encrypt");
+    await h.voice.setScreenSharing(false);
+    assert.equal(sender.track, camera);
+    assert.equal(sender.transform, transform);
+    h.voice.leave();
+});
+
+test("mobile wake lock is acquired, reacquired on return, and released on leave", async () => {
+    const locks = [];
+    const h = await createHarness({
+        navigator: {
+            userAgent: "Android",
+            wakeLock: {
+                async request(type) {
+                    assert.equal(type, "screen");
+                    const listeners = {};
+                    const lock = {
+                        released: false,
+                        addEventListener(name, listener) { listeners[name] = listener; },
+                        async release() { this.released = true; listeners.release?.(); }
+                    };
+                    locks.push(lock);
+                    return lock;
+                }
+            }
+        }
+    });
+    await h.join();
+    assert.equal(h.voice.supportsMobileScreenWakeLock(), true);
+    assert.equal(await h.voice.setKeepScreenOn(true), true);
+    assert.equal(locks.length, 1);
+    await h.visibilityChanged("hidden");
+    await locks[0].release();
+    assert.equal(locks.length, 1);
+    await h.visibilityChanged("visible");
+    assert.equal(locks.length, 2);
+    h.voice.leave();
+    assert.equal(locks[1].released, true);
+    assert.equal(h.documentListeners.size, 0);
+});
+
+test("desktop does not request a mobile wake lock", async () => {
+    let requests = 0;
+    const h = await createHarness({
+        navigator: { userAgent: "Windows NT", wakeLock: { request() { requests++; } } }
+    });
+    await h.join();
+    assert.equal(await h.voice.setKeepScreenOn(true), false);
+    assert.equal(requests, 0);
+    h.voice.leave();
+});
+
+for (const action of ["leaving", "disabling keep-screen-on"]) {
+    test(`a wake-lock request finishing after ${action} is released instead of becoming active`, async () => {
+        let resolveRequest;
+        const request = new Promise(resolve => { resolveRequest = resolve; });
+        const lock = {
+            released: false,
+            addEventListener() {},
+            async release() { this.released = true; }
+        };
+        const h = await createHarness({
+            navigator: { userAgent: "Android", wakeLock: { request: () => request } }
+        });
+        await h.join();
+        const starting = h.voice.setKeepScreenOn(true);
+        if (action === "leaving") h.voice.leave();
+        else assert.equal(await h.voice.setKeepScreenOn(false), false);
+        resolveRequest(lock);
+        assert.equal(await starting, false);
+        assert.equal(lock.released, true);
+        h.voice.leave();
+    });
+}
+
+test("a stale wake-lock denial cannot disable a newer successful request", async () => {
+    let rejectRequest;
+    const pendingRequest = new Promise((resolve, reject) => { rejectRequest = reject; });
+    const warnings = [];
+    const locks = [];
+    let requests = 0;
+    const h = await createHarness({
+        console: { ...console, warn: (...args) => warnings.push(args) },
+        navigator: {
+            userAgent: "Android",
+            wakeLock: {
+                request() {
+                    if (++requests === 1) return pendingRequest;
+                    const listeners = {};
+                    const lock = {
+                        released: false,
+                        addEventListener(name, listener) { listeners[name] = listener; },
+                        async release() { this.released = true; listeners.release?.(); }
+                    };
+                    locks.push(lock);
+                    return Promise.resolve(lock);
+                }
+            }
+        }
+    });
+    await h.join();
+    const starting = h.voice.setKeepScreenOn(true);
+    assert.equal(await h.voice.setKeepScreenOn(false), false);
+    assert.equal(await h.voice.setKeepScreenOn(true), true);
+    rejectRequest(new Error("Previous request denied"));
+    assert.equal(await starting, false);
+    assert.ok(warnings.some(([message]) => message.includes("Unable to keep the screen awake")));
+    await locks[0].release();
+    await h.visibilityChanged("visible");
+    assert.equal(requests, 3);
+    h.voice.leave();
+    assert.equal(locks[1].released, true);
+});
+
+test("wake-lock denial is reported and does not enable keep-screen-on", async () => {
+    const warnings = [];
+    const h = await createHarness({
+        console: { ...console, warn: (...args) => warnings.push(args) },
+        navigator: {
+            userAgent: "Android",
+            wakeLock: { request: () => Promise.reject(new Error("Permission denied")) }
+        }
+    });
+    await h.join();
+    assert.equal(await h.voice.setKeepScreenOn(true), false);
+    assert.ok(warnings.some(([message]) => message.includes("Unable to keep the screen awake")));
+    h.voice.leave();
+});
+
+async function startVideoHarness(quality = "low") {
+    const h = await createHarness();
+    await h.join(true, quality);
+    h.streams[0].addTrack({ kind: "video", readyState: "live", stop() {} });
+    await h.voice.connectToParticipants([
+        { connectionId: "slow-peer", name: "Slow" },
+        { connectionId: "fast-peer", name: "Fast" }
+    ]);
+    return h;
+}
+
+function videoNetworkStats(bandwidth, loss = 0, roundTripTime = 0.05) {
+    return new Map([
+        ["pair", {
+            type: "candidate-pair", state: "succeeded", nominated: true,
+            availableOutgoingBitrate: bandwidth, currentRoundTripTime: roundTripTime
+        }],
+        ["remote-video", { type: "remote-inbound-rtp", kind: "video", fractionLost: loss }]
+    ]);
+}
+
+test("fixed Low video reduces bitrate, frame rate and resolution below the preset for a weak receiver", async () => {
+    const h = await startVideoHarness();
+    h.connections[0].stats = videoNetworkStats(150000);
+    h.connections[1].stats = videoNetworkStats(5000000);
+    await h.adaptQuality();
+    const slow = h.connections[0].getSenders()[1].parameters.encodings[0];
+    const fast = h.connections[1].getSenders()[1].parameters.encodings[0];
+    assert.equal(slow.maxBitrate, 89000);
+    assert.equal(slow.maxFramerate, 5);
+    assert.ok(slow.scaleResolutionDownBy > 1);
+    assert.equal(fast.maxBitrate, 250000);
+    assert.equal(fast.maxFramerate, 15);
+    assert.equal(fast.scaleResolutionDownBy, 1);
+    assert.equal(h.connections[0].getSenders()[0].parameters.encodings[0].maxBitrate, 16000);
+    h.voice.leave();
+});
+
+test("remote video loss reduces a manual High preset even without browser bandwidth estimates", async () => {
+    const h = await startVideoHarness("high");
+    h.connections[0].stats = videoNetworkStats(undefined, 0.2);
+    await h.adaptQuality();
+    assert.equal(h.connections[0].getSenders()[1].parameters.encodings[0].maxBitrate, 975000);
+    assert.equal(h.connections[1].getSenders()[1].parameters.encodings[0].maxBitrate, 1500000);
+    for (let tick = 0; tick < 10; tick++) await h.adaptQuality();
+    const encoding = h.connections[0].getSenders()[1].parameters.encodings[0];
+    assert.equal(encoding.maxBitrate, 50000);
+    assert.equal(encoding.maxFramerate, 5);
+    h.voice.leave();
+});
+
+test("bandwidth recovery is gradual and never exceeds the chosen Low preset", async () => {
+    const h = await startVideoHarness();
+    h.connections[0].stats = videoNetworkStats(150000);
+    await h.adaptQuality();
+    h.connections[0].stats = videoNetworkStats(5000000);
+    await h.adaptQuality();
+    assert.equal(h.connections[0].getSenders()[1].parameters.encodings[0].maxBitrate, 89000);
+    await h.adaptQuality();
+    assert.equal(h.connections[0].getSenders()[1].parameters.encodings[0].maxBitrate, 111250);
+    for (let tick = 0; tick < 30; tick++) await h.adaptQuality();
+    const encoding = h.connections[0].getSenders()[1].parameters.encodings[0];
+    assert.equal(encoding.maxBitrate, 250000);
+    assert.equal(encoding.maxFramerate, 15);
+    assert.equal(encoding.scaleResolutionDownBy, 1);
+    h.voice.leave();
+});
+
+test("healthy links do not retain an artificial cap when manually increasing quality", async () => {
+    const h = await startVideoHarness("very-low");
+    for (const connection of h.connections) connection.stats = videoNetworkStats(5000000);
+    await h.adaptQuality();
+    await h.voice.setVideoQuality("high");
+    for (const connection of h.connections) {
+        const encoding = connection.getSenders()[1].parameters.encodings[0];
+        assert.equal(encoding.maxBitrate, 1500000);
+        assert.equal(encoding.maxFramerate, 30);
+        assert.equal(encoding.scaleResolutionDownBy, 1);
+    }
+    h.voice.leave();
+});
+
+test("manual quality increases preserve a real bandwidth constraint", async () => {
+    const h = await startVideoHarness("very-low");
+    h.connections[0].stats = videoNetworkStats(80000);
+    await h.adaptQuality();
+    await h.voice.setVideoQuality("high");
+    assert.equal(h.connections[0].getSenders()[1].parameters.encodings[0].maxBitrate, 50000);
+    assert.equal(h.connections[1].getSenders()[1].parameters.encodings[0].maxBitrate, 1500000);
+    h.voice.leave();
+});
+
+test("Auto does not promote video on RTT-only statistics without a bandwidth estimate", async () => {
+    const h = await startVideoHarness("auto");
+    for (const connection of h.connections) connection.stats = videoNetworkStats(undefined);
+    for (let tick = 0; tick < 5; tick++) await h.adaptQuality();
+    assert.ok(!h.callbacks.some(([method, quality]) =>
+        method === "VideoQualityAdapted" && quality === "high"));
+    h.voice.leave();
+});
+
+for (const [device, userAgent, quality, bitrate, height, frameRate] of [
+    ["mobile", "Android", "very-low", 100000, 144, 8],
+    ["desktop", "Windows NT", "auto", 700000, 480, 24]
+]) {
+    test(`${device} defaults control actual microphone/camera capture and initial sender limits`, async () => {
+        const requests = [];
+        const track = kind => ({
+            kind, readyState: "live", addEventListener() {},
+            stop() { this.readyState = "ended"; },
+            applyConstraints() { return Promise.resolve(); }
+        });
+        const audio = track("audio");
+        const video = track("video");
+        const h = await createHarness({
+            navigator: {
+                userAgent,
+                mediaDevices: {
+                    getSupportedConstraints: () => ({}),
+                    async getUserMedia(request) {
+                        requests.push(request);
+                        return {
+                            getAudioTracks: () => [audio],
+                            getVideoTracks: () => [video]
+                        };
+                    }
+                }
+            }
+        });
+        assert.equal(h.defaults.getDefaultMediaQuality(), quality);
+        await h.join(false, h.defaults.getDefaultMediaQuality());
+        await h.voice.connectToParticipants([{ connectionId: "remote", name: "Remote" }]);
+        await h.voice.setVideoEnabled(true);
+        assert.equal(requests[0].audio.sampleRate.ideal, device === "mobile" ? 16000 : 32000);
+        assert.equal(requests[0].audio.echoCancellation.ideal, true);
+        assert.equal(requests[1].video.height.max, height);
+        assert.equal(requests[1].video.width.max, device === "mobile" ? 256 : 854);
+        assert.equal(requests[1].video.frameRate.max, frameRate);
+        const [audioSender, videoSender] = h.connections[0].getSenders();
+        assert.equal(audioSender.parameters.encodings[0].maxBitrate, device === "mobile" ? 12000 : 32000);
+        assert.equal(videoSender.parameters.encodings[0].maxBitrate, bitrate);
+        assert.equal(videoSender.parameters.encodings[0].maxFramerate, frameRate);
+        assert.deepEqual(h.imports, []);
+        h.voice.leave();
+    });
+}

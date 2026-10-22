@@ -11,6 +11,20 @@ self.onrtctransform = event => {
     const counterPrefix = createCounterPrefix(senderId, mediaKind, contextId);
     let frameCounter = operation === "encrypt" ? createInitialFrameCounter() : 0n;
     let hasVp8PayloadDescriptor = null;
+    let previousFrameCounter;
+    let waitingForKeyFrame = true;
+    let lastKeyFrameRequest = -Infinity;
+
+    function requestKeyFrame() {
+        if (Date.now() - lastKeyFrameRequest < 1000) return;
+        lastKeyFrameRequest = Date.now();
+        if (typeof event.transformer.sendKeyFrameRequest !== "function") {
+            console.warn("Video recovery is waiting for a keyframe; this browser cannot request one");
+            return;
+        }
+        event.transformer.sendKeyFrameRequest()
+            .catch(error => console.warn("Unable to request a recovery video keyframe", error));
+    }
 
     event.transformer.readable
         .pipeThrough(new TransformStream({
@@ -25,13 +39,34 @@ self.onrtctransform = event => {
                 const output = operation === "encrypt"
                     ? await encryptFrame(input, clearHeaderLength, counterPrefix, cryptoKey, frameCounter++)
                     : await decryptFrame(input, counterPrefix, cryptoKey);
-                if (!output) return;
+                if (!output) {
+                    if (operation === "decrypt" && mediaKind === "video") {
+                        waitingForKeyFrame = true;
+                        requestKeyFrame();
+                    }
+                    return;
+                }
+                if (operation === "decrypt" && mediaKind === "video") {
+                    const receivedCounter = new DataView(
+                        input.buffer, input.byteOffset + input.byteLength - 8, 8).getBigUint64(0);
+                    // Delta frames after a missing encrypted frame can depend on an unavailable reference.
+                    if (previousFrameCounter !== undefined && receivedCounter !== previousFrameCounter + 1n) {
+                        waitingForKeyFrame = true;
+                    }
+                    previousFrameCounter = receivedCounter;
+                    if (frame.type === "key") waitingForKeyFrame = false;
+                    if (waitingForKeyFrame) {
+                        requestKeyFrame();
+                        return;
+                    }
+                }
 
                 frame.data = output.buffer;
                 controller.enqueue(frame);
             }
         }))
-        .pipeTo(event.transformer.writable);
+        .pipeTo(event.transformer.writable)
+        .catch(error => console.error("Encrypted media transform failed", error));
 };
 
 function getVp8ClearHeader(frame, frameType, hasPayloadDescriptor) {

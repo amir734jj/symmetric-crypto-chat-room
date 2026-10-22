@@ -5,5 +5,17 @@ export function isMobileDevice() {
 }
 
 export function getDefaultMediaQuality() {
-    return isMobileDevice() ? "low" : "auto";
+    return isMobileDevice() ? "very-low" : "auto";
+}
+
+export function getNetworkConnection() {
+    return navigator.connection ?? navigator.mozConnection ?? navigator.webkitConnection;
+}
+
+export function isLowBandwidthMobileConnection() {
+    if (!isMobileDevice()) return false;
+    const connection = getNetworkConnection();
+    return connection?.saveData === true ||
+        ["slow-2g", "2g", "3g"].includes(connection?.effectiveType) ||
+        (Number.isFinite(connection?.downlink) && connection.downlink >= 0 && connection.downlink < 1.5);
 }

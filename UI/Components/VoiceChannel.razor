@@ -59,7 +59,7 @@
                         @(_screenSharing ? "Stop sharing" : "Share screen")
                     </HxButton>
                 }
-                @if (_liveTranscriptionSupported)
+                @if (_liveTranscriptionSupported || _transcriptionEnabled)
                 {
                     <HxButton Color="ThemeColor.Secondary" Enabled="@(!_busy && (_transcriptionEnabled || _participantIds.Count > 0))" OnClick="ToggleTranscription">
                         @(_transcriptionEnabled ? "Stop transcription" : "Start transcription")
@@ -86,6 +86,7 @@
                     <span>Audio quality</span>
                     <select @key="_effectiveAudioQuality" class="form-select form-select-sm" @bind="_audioQuality" @bind:after="AudioQualityChanged" disabled="@_busy">
                         <option value="auto">Auto - Current: @AudioQualityLabel(_effectiveAudioQuality)</option>
+                        <option value="very-low">Very low</option>
                         <option value="low">Low</option>
                         <option value="standard">Medium</option>
                         <option value="high">High</option>
@@ -95,6 +96,7 @@
                     <span>Camera quality</span>
                     <select @key="_effectiveVideoQuality" class="form-select form-select-sm" @bind="_videoQuality" @bind:after="VideoQualityChanged" disabled="@_busy">
                         <option value="auto">Auto - Current: @VideoQualityLabel(_effectiveVideoQuality)</option>
+                        <option value="very-low">Very low (144p)</option>
                         <option value="low">Low (240p)</option>
                         <option value="standard">Medium (480p)</option>
                         <option value="high">High (720p)</option>
@@ -276,7 +278,7 @@
 
     [Parameter] public bool DebugMode { get; set; }
 
-    private const string VoiceModulePath = "./js/voice-chat.js?v=20261022-2";
+    private const string VoiceModulePath = "./js/voice-chat.js?v=20261022-6";
 
     private static readonly TimeSpan RingTimeout = TimeSpan.FromSeconds(30);
     private readonly HashSet<string> _participantIds = [];
@@ -393,7 +395,7 @@
 
     private async Task ApplyQualityDefaults()
     {
-        await using var defaults = await Js.InvokeAsync<IJSObjectReference>("import", "./js/media-defaults.js");
+        await using var defaults = await Js.InvokeAsync<IJSObjectReference>("import", "./js/media-defaults.js?v=20261022-2");
         var quality = await defaults.InvokeAsync<string>("getDefaultMediaQuality");
         if (!_audioQualitySelected)
         {
@@ -1050,6 +1052,18 @@
     }
 
     [JSInvokable]
+    public Task TranscriptionAvailabilityChanged(bool available, string recommendedModel)
+    {
+        return InvokeAsync(() =>
+        {
+            if (!_joined) return;
+            _liveTranscriptionSupported = available;
+            if (available) _recommendedTranscriptionModel = recommendedModel;
+            StateHasChanged();
+        });
+    }
+
+    [JSInvokable]
     public Task TranscriptionTextReceived(string text)
     {
         return InvokeAsync(() =>
@@ -1105,6 +1119,7 @@
     {
         return quality switch
         {
+            "very-low" => "Very low",
             "low" => "Low",
             "high" => "High",
             _ => "Medium"
@@ -1115,6 +1130,7 @@
     {
         return quality switch
         {
+            "very-low" => "Very low (144p)",
             "low" => "Low (240p)",
             "high" => "High (720p)",
             _ => "Medium (480p)"

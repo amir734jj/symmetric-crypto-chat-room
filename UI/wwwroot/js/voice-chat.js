@@ -1,4 +1,4 @@
-import { isMobileDevice } from "./media-defaults.js";
+import { getNetworkConnection, isLowBandwidthMobileConnection, isMobileDevice } from "./media-defaults.js?v=20261022-2";
 
 let dotNetReference;
 let remoteMediaContainer;
@@ -28,6 +28,7 @@ let goodVideoNetworkSamples = 0;
 let poorVideoNetworkSamples = 0;
 let adaptationInProgress = false;
 let screenWakeLock;
+let wakeLockRequestId = 0;
 let keepScreenOn = false;
 let selectedAudioOutputId = "";
 let audioOutputMode = "auto";
@@ -37,12 +38,15 @@ let transcription;
 let transcriptionRequestId = 0;
 const peers = new Map();
 const liveDataRateSamples = new Map();
+const senderVideoBudgets = new WeakMap();
 const audioQualityProfiles = {
+    "very-low": { sampleRate: 16000, maxBitrate: 12000 },
     low: { sampleRate: 16000, maxBitrate: 16000 },
     standard: { sampleRate: 32000, maxBitrate: 32000 },
     high: { sampleRate: 48000, maxBitrate: 64000 }
 };
 const videoQualityProfiles = {
+    "very-low": { width: 256, height: 144, frameRate: 8, maxBitrate: 100000 },
     low: { width: 426, height: 240, frameRate: 15, maxBitrate: 250000 },
     standard: { width: 854, height: 480, frameRate: 24, maxBitrate: 700000 },
     high: { width: 1280, height: 720, frameRate: 30, maxBitrate: 1500000 }
@@ -56,7 +60,7 @@ export async function initialize(
     passwordDerivedKey,
     selectedAudioQuality,
     selectedVideoQuality) {
-    if (!("RTCRtpScriptTransform" in window)) {
+    if (typeof window.RTCRtpScriptTransform !== "function") {
         throw new Error("This browser does not support password-encrypted WebRTC audio");
     }
 
@@ -71,7 +75,7 @@ export async function initialize(
     videoQualityMode = normalizeVideoQualityMode(selectedVideoQuality);
     videoQuality = videoQualityMode === "auto" ? "standard" : videoQualityMode;
     encryptionWorker = new Worker(
-        new URL("./voice-crypto-worker.js?version=vp8-payload-descriptor-v2", import.meta.url),
+        new URL("./voice-crypto-worker.js?version=vp8-loss-recovery-v3", import.meta.url),
         { type: "module" });
 
     const host = turnCredentials.host || window.location.hostname;
@@ -93,6 +97,8 @@ export async function initialize(
     localStream = new MediaStream();
     document.removeEventListener("visibilitychange", handleVisibilityChange);
     document.addEventListener("visibilitychange", handleVisibilityChange);
+    getNetworkConnection()?.removeEventListener?.("change", handleNetworkConnectionChange);
+    getNetworkConnection()?.addEventListener?.("change", handleNetworkConnectionChange);
     startQualityAdaptation();
     notifyAudioQualityChanged();
     notifyVideoQualityChanged();
@@ -360,7 +366,7 @@ export async function setScreenSharing(enabled) {
                 try {
                     const sender = peer.connection.getSenders().find(candidate => candidate.track?.kind === "video");
                     if (sender) {
-                        await sender.replaceTrack(displayTrack);
+                        await replaceEncryptedVideoTrack(peer, sender, displayTrack);
                         await applySenderVideoQuality(sender);
                     } else {
                         const newSender = addLocalTrack(peer, displayTrack, connectionId);
@@ -413,7 +419,7 @@ async function stopScreenSharing(notifyBrowserStop = false) {
             if (!sender) continue;
 
             if (restoredCamera) {
-                await sender.replaceTrack(restoredCamera);
+                await replaceEncryptedVideoTrack(peer, sender, restoredCamera);
                 await applySenderVideoQuality(sender);
             } else {
                 peer.connection.removeTrack(sender);
@@ -493,7 +499,14 @@ export function usesAudioSessionOutputModes() {
 }
 
 export function supportsLiveTranscription() {
-    return Boolean(window.AudioContext || window.webkitAudioContext) && "Worker" in window;
+    return Boolean(window.AudioContext || window.webkitAudioContext) && "Worker" in window &&
+        !isLowBandwidthMobileConnection();
+}
+
+function handleNetworkConnectionChange() {
+    dotNetReference?.invokeMethodAsync(
+        "TranscriptionAvailabilityChanged", supportsLiveTranscription(), getRecommendedTranscriptionModel())
+        .catch(error => console.warn("Unable to update transcription availability", error));
 }
 
 export function getRecommendedTranscriptionModel() {
@@ -517,6 +530,9 @@ export async function setTranscriptionEnabled(enabled, selectedModel = "auto") {
             throw new Error("Connect to another participant before starting transcription");
         }
         if (!supportsLiveTranscription()) {
+            if (isLowBandwidthMobileConnection()) {
+                throw new Error("Transcription downloads are disabled on this low-bandwidth mobile connection");
+            }
             throw new Error("Live transcription is not supported by this browser");
         }
 
@@ -526,6 +542,9 @@ export async function setTranscriptionEnabled(enabled, selectedModel = "auto") {
         transcription = module;
         if (!localStream?.getAudioTracks().some(track => track.readyState === "live")) {
             throw new Error("Connect to another participant before starting transcription");
+        }
+        if (!supportsLiveTranscription()) {
+            throw new Error("The connection no longer supports starting transcription");
         }
         const model = ["tiny", "base", "small", "tiny-en", "base-en", "small-en"].includes(selectedModel)
             ? selectedModel
@@ -666,6 +685,14 @@ export async function getConnectionDiagnostics() {
                 signalingState: peer.connection.signalingState,
                 usingTurnRelay: localCandidate?.candidateType === "relay",
                 currentDataRateMbps: calculateDataRateMbps(initialPair, selectedPair),
+                videoSenderLimits: peer.connection.getSenders()
+                    .filter(sender => sender.track?.kind === "video")
+                    .flatMap(sender => sender.getParameters().encodings ?? [])
+                    .map(encoding => ({
+                        maxBitrate: encoding.maxBitrate,
+                        maxFramerate: encoding.maxFramerate,
+                        scaleResolutionDownBy: encoding.scaleResolutionDownBy
+                    })),
                 inboundVideo: sanitizeVideoStats(inboundVideo, reports),
                 outboundVideo: sanitizeVideoStats(outboundVideo, reports),
                 selectedCandidatePair: selectedPair ? {
@@ -860,6 +887,7 @@ export function leave() {
     goodVideoNetworkSamples = 0;
     poorVideoNetworkSamples = 0;
     document.removeEventListener("visibilitychange", handleVisibilityChange);
+    getNetworkConnection()?.removeEventListener?.("change", handleNetworkConnectionChange);
     keepScreenOn = false;
     releaseScreenWakeLock();
     stopProximityRouting();
@@ -908,20 +936,29 @@ async function requestScreenWakeLock() {
         document.visibilityState !== "visible") return false;
     if (screenWakeLock && !screenWakeLock.released) return true;
 
+    const requestId = ++wakeLockRequestId;
+    const requestedStream = localStream;
     try {
-        screenWakeLock = await navigator.wakeLock.request("screen");
-        screenWakeLock.addEventListener("release", () => {
-            screenWakeLock = undefined;
+        const requestedLock = await navigator.wakeLock.request("screen");
+        if (requestId !== wakeLockRequestId || !keepScreenOn ||
+            localStream !== requestedStream || document.visibilityState !== "visible") {
+            await requestedLock.release();
+            return false;
+        }
+        screenWakeLock = requestedLock;
+        requestedLock.addEventListener("release", () => {
+            if (screenWakeLock === requestedLock) screenWakeLock = undefined;
         }, { once: true });
         return true;
     } catch (error) {
         console.warn("Unable to keep the screen awake during the voice call", error);
-        keepScreenOn = false;
+        if (requestId === wakeLockRequestId) keepScreenOn = false;
         return false;
     }
 }
 
 function releaseScreenWakeLock() {
+    wakeLockRequestId++;
     const activeWakeLock = screenWakeLock;
     screenWakeLock = undefined;
     activeWakeLock?.release().catch(() => {});
@@ -1029,6 +1066,7 @@ async function createPeer(connectionId, participantName) {
     remoteMediaContainer.appendChild(tile);
 
     const peer = {
+        connectionId,
         connection,
         audio,
         video,
@@ -1037,6 +1075,7 @@ async function createPeer(connectionId, participantName) {
         pendingCandidates: [],
         makingOffer: false,
         ignoreOffer: false,
+        goodVideoBandwidthSamples: 0,
         polite: localConnectionId.localeCompare(connectionId) > 0
     };
     peers.set(connectionId, peer);
@@ -1096,8 +1135,8 @@ async function createPeer(connectionId, participantName) {
 }
 
 function addLocalTrack(peer, track, remoteConnectionId) {
-    const sender = peer.connection.addTrack(track, localStream);
-    sender.transform = new RTCRtpScriptTransform(
+    requireMediaEncryption();
+    const transform = new RTCRtpScriptTransform(
         encryptionWorker,
         {
             operation: "encrypt",
@@ -1107,13 +1146,39 @@ function addLocalTrack(peer, track, remoteConnectionId) {
             contextId: remoteConnectionId
         });
 
-    const transceiver = peer.connection.getTransceivers()
-        .find(candidate => candidate.sender === sender);
-    if (track.kind === "video") {
-        preferVp8(transceiver);
+    const sender = peer.connection.addTrack(track, localStream);
+    try {
+        sender.transform = transform;
+        const transceiver = peer.connection.getTransceivers()
+            .find(candidate => candidate.sender === sender);
+        if (track.kind === "video") {
+            preferVp8(transceiver);
+        }
+        setReceiverTransform(transceiver.receiver, remoteConnectionId, track.kind);
+        return sender;
+    } catch (error) {
+        peer.connection.removeTrack(sender);
+        throw error;
     }
-    setReceiverTransform(transceiver.receiver, remoteConnectionId, track.kind);
-    return sender;
+}
+
+function requireMediaEncryption() {
+    if (!voiceKey || !encryptionWorker) {
+        throw new Error("Password encryption is not initialized; refusing to send media");
+    }
+}
+
+function replaceEncryptedVideoTrack(peer, sender, track) {
+    try {
+        requireMediaEncryption();
+        if (!sender.transform) {
+            throw new Error("Password encryption is missing from the video sender; refusing to replace its track");
+        }
+    } catch (error) {
+        peer.connection.removeTrack(sender);
+        throw error;
+    }
+    return sender.replaceTrack(track);
 }
 
 async function ensurePeerAudioSender(peer, remoteConnectionId) {
@@ -1278,12 +1343,14 @@ async function applySenderVideoQuality(sender) {
         ? { frameRate: 15, maxBitrate: 1500000 }
         : videoQualityProfiles[videoQuality];
     const parameters = sender.getParameters();
+    const bitrate = Math.min(profile.maxBitrate, senderVideoBudgets.get(sender) ?? profile.maxBitrate);
     if (!parameters.encodings?.length) {
         parameters.encodings = [{}];
     }
     for (const encoding of parameters.encodings) {
-        encoding.maxBitrate = profile.maxBitrate;
-        encoding.maxFramerate = profile.frameRate;
+        encoding.maxBitrate = bitrate;
+        encoding.maxFramerate = Math.min(profile.frameRate, bitrate < 100000 ? 5 : bitrate < 200000 ? 10 : profile.frameRate);
+        encoding.scaleResolutionDownBy = sharingScreen ? 1 : Math.min(4, Math.max(1, Math.sqrt(profile.maxBitrate / bitrate)));
     }
     parameters.degradationPreference = sharingScreen ? "maintain-resolution" : "balanced";
     await sender.setParameters(parameters);
@@ -1295,14 +1362,14 @@ function startQualityAdaptation() {
 }
 
 async function adaptMediaQuality() {
-    if ((audioQualityMode !== "auto" && videoQualityMode !== "auto") ||
-        adaptationInProgress || peers.size === 0) return;
+    if (adaptationInProgress || peers.size === 0) return;
 
     adaptationInProgress = true;
     try {
         const samples = await Promise.all([...peers.values()].map(getNetworkSample));
         const usableSamples = samples.filter(sample => sample !== null);
         if (usableSamples.length === 0) return;
+        await Promise.all(usableSamples.map(adaptPeerVideoBandwidth));
 
         const audioNetworkIsGood = usableSamples.every(sample =>
             (sample.roundTripTime === undefined || sample.roundTripTime <= 0.15) &&
@@ -1331,7 +1398,7 @@ async function adaptMediaQuality() {
             (sample.roundTripTime === undefined || sample.roundTripTime <= 0.2) &&
             ((sample.videoFractionLost ?? sample.fractionLost) === undefined ||
                 (sample.videoFractionLost ?? sample.fractionLost) <= 0.03) &&
-            (sample.availableOutgoingBitrate === undefined || sample.availableOutgoingBitrate >= improvementBitrate));
+            (sample.availableOutgoingBitrate !== undefined && sample.availableOutgoingBitrate >= improvementBitrate));
         const videoNetworkIsPoor = usableSamples.some(sample =>
             (sample.roundTripTime !== undefined && sample.roundTripTime > 0.35) ||
             (sample.videoFractionLost ?? sample.fractionLost) > 0.06 ||
@@ -1364,6 +1431,35 @@ async function adaptMediaQuality() {
     }
 }
 
+async function adaptPeerVideoBandwidth(sample) {
+    const { peer } = sample;
+    if (peers.get(peer.connectionId) !== peer) return;
+    const senders = peer.connection.getSenders().filter(sender => sender.track?.kind === "video");
+    if (senders.length === 0) return;
+
+    const loss = sample.videoFractionLost ?? sample.fractionLost;
+    const poor = loss > 0.06 || sample.roundTripTime > 0.35;
+    const healthy = !poor && (loss === undefined || loss <= 0.03) &&
+        (sample.roundTripTime === undefined || sample.roundTripTime <= 0.2);
+    peer.goodVideoBandwidthSamples = healthy ? peer.goodVideoBandwidthSamples + 1 : 0;
+    const recover = peer.goodVideoBandwidthSamples >= 3;
+    if (recover) peer.goodVideoBandwidthSamples = 0;
+
+    for (const sender of senders) {
+        const maximum = sender.track === screenTrack ? 1500000 : videoQualityProfiles[videoQuality].maxBitrate;
+        const previous = Math.min(maximum, senderVideoBudgets.get(sender) ?? maximum);
+        const available = Number.isFinite(sample.availableOutgoingBitrate) && sample.availableOutgoingBitrate > 0
+            ? Math.max(50000, Math.floor(sample.availableOutgoingBitrate * 0.7 - audioQualityProfiles[audioQuality].maxBitrate))
+            : maximum;
+        let budget = Math.min(previous, available);
+        if (poor) budget = Math.min(budget, Math.max(50000, Math.floor(previous * 0.65)));
+        else if (recover) budget = Math.min(maximum, available, Math.ceil(previous * 1.25));
+        if (budget < maximum) senderVideoBudgets.set(sender, budget);
+        else senderVideoBudgets.delete(sender);
+        await applySenderVideoQuality(sender);
+    }
+}
+
 async function getNetworkSample(peer) {
     if (peer.connection.connectionState !== "connected") return null;
 
@@ -1389,7 +1485,9 @@ async function getNetworkSample(peer) {
         availableOutgoingBitrate: selectedPair?.availableOutgoingBitrate
     };
 
-    return Object.values(sample).some(value => value !== undefined) ? sample : null;
+    return Object.values(sample).some(value => value !== undefined)
+        ? { ...sample, peer }
+        : null;
 }
 
 function notifyAudioQualityChanged() {

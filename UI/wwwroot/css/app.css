@@ -126,8 +126,22 @@ pre {
     gap: 0.75rem 1rem;
 }
 
+.voice-settings-controls .voice-quality {
+    align-items: stretch;
+    flex: 1 1 18rem;
+    flex-direction: column;
+    gap: 0.25rem;
+    white-space: normal;
+}
+
 .voice-settings-controls .voice-transcription-model {
+    flex-basis: 100%;
     justify-content: flex-start;
+}
+
+.voice-settings-controls .voice-quality .form-select {
+    max-width: 100%;
+    width: 100%;
 }
 
 .voice-transcription-warning {
@@ -158,23 +172,28 @@ pre {
     flex-wrap: wrap;
     gap: 0.5rem;
     justify-content: flex-end;
+    min-width: 0;
 }
 
 .voice-quality {
     align-items: center;
     display: flex;
     gap: 0.5rem;
+    max-width: 100%;
+    min-width: 0;
     white-space: nowrap;
 }
 
 .voice-quality .form-select {
-    min-width: 7.5rem;
+    flex: 1 1 auto;
+    min-width: 0;
+    width: auto;
 }
 
 .voice-keep-awake {
     align-self: center;
     margin: 0;
-    white-space: nowrap;
+    white-space: normal;
 }
 
 .voice-transcription-model .form-select {
@@ -395,6 +414,7 @@ pre {
     .voice-settings-controls .voice-quality {
         align-items: stretch;
         flex-direction: column;
+        flex-basis: 100%;
         min-width: 0;
         white-space: normal;
         width: 100%;
