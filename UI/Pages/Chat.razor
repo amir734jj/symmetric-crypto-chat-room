@@ -31,17 +31,23 @@
         Encrypted messages and files are cached on the server for @ChatConstants.MessageRetentionMinutes minutes for chat playback.
     </p>
 
-    <div class="row">
-        <div class="col-sm-5 offset-sm-7">
-            <div class="float-end">
-                <HxButton Color="ThemeColor.Danger" Size="ButtonSize.Small" OnClick="@(LogoutHandler)"> Logout </HxButton>
+    <div class="chat-toolbar">
+        <div class="chat-mode-switches" aria-label="Interface options">
+            <div class="form-check form-switch">
+                <input id="advanced-mode" class="form-check-input" type="checkbox" role="switch" @bind="_advancedMode" />
+                <label class="form-check-label" for="advanced-mode">Advanced settings</label>
+            </div>
+            <div class="form-check form-switch">
+                <input id="debug-mode" class="form-check-input" type="checkbox" role="switch" @bind="_debugMode" />
+                <label class="form-check-label" for="debug-mode">Debug mode</label>
             </div>
         </div>
+        <HxButton Color="ThemeColor.Danger" Size="ButtonSize.Small" OnClick="@(LogoutHandler)"> Logout </HxButton>
     </div>
 
     <hr/>
 
-    <UI.Components.VoiceChannel />
+    <UI.Components.VoiceChannel AdvancedMode="_advancedMode" DebugMode="_debugMode" />
 
     <hr/>
 
@@ -81,21 +87,24 @@
                 <h4>Messages:</h4>
             </div>
         </div>
-        <div class="col-sm-5">
-            <div class="float-end ms-2">
-                <HxButton Size="ButtonSize.Small" Color="ThemeColor.Secondary" OnClick="@(() => _showState = !_showState)">
-                    @(_showState ? "Hide State" : "Show State")
-                </HxButton>
+        @if (_debugMode)
+        {
+            <div class="col-sm-5">
+                <div class="float-end ms-2">
+                    <HxButton Size="ButtonSize.Small" Color="ThemeColor.Secondary" OnClick="@(() => _showState = !_showState)">
+                        @(_showState ? "Hide State" : "Show State")
+                    </HxButton>
 
-                <HxButton Size="ButtonSize.Small" Color="ThemeColor.Secondary" OnClick="@(() => _showInvalid = !_showInvalid)">
-                    @(_showInvalid ? "Hide Invalid" : "Show Invalid")
-                </HxButton>
+                    <HxButton Size="ButtonSize.Small" Color="ThemeColor.Secondary" OnClick="@(() => _showInvalid = !_showInvalid)">
+                        @(_showInvalid ? "Hide Invalid" : "Show Invalid")
+                    </HxButton>
+                </div>
             </div>
-        </div>
+        }
     </div>
 
 
-    @if (_showState)
+    @if (_debugMode && _showState)
     {
         <pre class="my-2">
 @(JsonSerializer.Serialize(State, typeof(IReadonlyState), new JsonSerializerOptions { WriteIndented = true }))
@@ -113,7 +122,7 @@
 
     @foreach (var (message, valid) in State.Messages)
     {
-        if (!_showInvalid && !valid) continue;
+        if (!valid && !(_debugMode && _showInvalid)) continue;
 
         <HxCard CssClass="mt-3">
             <HeaderTemplate>
@@ -191,6 +200,10 @@
     private ElementReference _elementReference;
 
     private bool _showState;
+
+    private bool _advancedMode;
+
+    private bool _debugMode;
     
     private bool _showInvalid;
 

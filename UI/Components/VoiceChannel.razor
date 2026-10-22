@@ -15,31 +15,10 @@
         </div>
 
         <div class="voice-channel-actions">
-            <label class="voice-quality">
-                <span>Audio quality</span>
-                <select @key="_effectiveAudioQuality" class="form-select form-select-sm" @bind="_audioQuality" @bind:after="AudioQualityChanged" disabled="@_busy">
-                    <option value="auto">Auto - Current: @AudioQualityLabel(_effectiveAudioQuality)</option>
-                    <option value="low">Low</option>
-                    <option value="standard">Medium</option>
-                    <option value="high">High</option>
-                </select>
-            </label>
-            <label class="voice-quality">
-                <span>Camera quality</span>
-                <select @key="_effectiveVideoQuality" class="form-select form-select-sm" @bind="_videoQuality" @bind:after="VideoQualityChanged" disabled="@_busy">
-                    <option value="auto">Auto - Current: @VideoQualityLabel(_effectiveVideoQuality)</option>
-                    <option value="low">Low (240p)</option>
-                    <option value="standard">Medium (480p)</option>
-                    <option value="high">High (720p)</option>
-                </select>
-            </label>
-            <HxButton Color="@TurnHealthColor" Enabled="@(!_checkingTurn)" OnClick="CheckTurnHealth">
-                @TurnHealthButtonText
-            </HxButton>
             @if (!_joined)
             {
                 <HxButton Color="ThemeColor.Success" Enabled="@(!_busy)" OnClick="Join">
-                    Join bridge
+                    Join call
                 </HxButton>
             }
             else
@@ -61,28 +40,9 @@
                         Choose output
                     </HxButton>
                 }
-                else
-                {
-                    <label class="voice-quality" title="This browser does not allow websites to change the phone audio route">
-                        <span>Audio output</span>
-                        <select class="form-select form-select-sm" disabled>
-                            <option>Auto (browser controlled)</option>
-                            <option>Always earpiece</option>
-                            <option>Always speaker</option>
-                        </select>
-                    </label>
-                    <span class="voice-output-note text-muted">Speaker and earpiece selection is unavailable in this browser.</span>
-                }
                 <HxButton Color="ThemeColor.Secondary" OnClick="ToggleMute">
                     @(_muted ? "Unmute" : "Mute")
                 </HxButton>
-                @if (_screenWakeLockSupported)
-                {
-                    <div class="form-check form-switch voice-keep-awake">
-                        <input id="keep-screen-on" class="form-check-input" type="checkbox" role="switch" @bind="_keepScreenOn" @bind:after="KeepScreenOnChanged" />
-                        <label class="form-check-label" for="keep-screen-on">Keep screen on</label>
-                    </div>
-                }
                 <HxButton Color="ThemeColor.Secondary" Enabled="@(!_busy && !_screenSharing)" OnClick="ToggleVideo">
                     @(_videoEnabled ? "Stop video" : "Start video")
                 </HxButton>
@@ -94,9 +54,61 @@
                 }
                 @if (_liveTranscriptionSupported)
                 {
+                    <HxButton Color="ThemeColor.Secondary" Enabled="@(!_busy && (_transcriptionEnabled || _participantIds.Count > 0))" OnClick="ToggleTranscription">
+                        @(_transcriptionEnabled ? "Stop transcription" : "Start transcription")
+                    </HxButton>
+                }
+                <HxButton Color="ThemeColor.Danger" OnClick="Leave">
+                    @(_participantIds.Count > 0 ? "End call" : "Leave call")
+                </HxButton>
+            }
+        </div>
+    </div>
+
+    @if (_joined && _liveTranscriptionSupported)
+    {
+        <small class="voice-transcription-warning text-muted">Starting transcription downloads large model files unless already cached. Wi-Fi recommended.</small>
+    }
+
+    @if (AdvancedMode)
+    {
+        <section class="voice-settings mt-3" aria-labelledby="voice-settings-title">
+            <strong id="voice-settings-title">Advanced call settings</strong>
+            <div class="voice-settings-controls mt-2">
+                <label class="voice-quality">
+                    <span>Audio quality</span>
+                    <select @key="_effectiveAudioQuality" class="form-select form-select-sm" @bind="_audioQuality" @bind:after="AudioQualityChanged" disabled="@_busy">
+                        <option value="auto">Auto - Current: @AudioQualityLabel(_effectiveAudioQuality)</option>
+                        <option value="low">Low</option>
+                        <option value="standard">Medium</option>
+                        <option value="high">High</option>
+                    </select>
+                </label>
+                <label class="voice-quality">
+                    <span>Camera quality</span>
+                    <select @key="_effectiveVideoQuality" class="form-select form-select-sm" @bind="_videoQuality" @bind:after="VideoQualityChanged" disabled="@_busy">
+                        <option value="auto">Auto - Current: @VideoQualityLabel(_effectiveVideoQuality)</option>
+                        <option value="low">Low (240p)</option>
+                        <option value="standard">Medium (480p)</option>
+                        <option value="high">High (720p)</option>
+                    </select>
+                </label>
+                @if (_joined && _screenWakeLockSupported)
+                {
+                    <div class="form-check form-switch voice-keep-awake">
+                        <input id="keep-screen-on" class="form-check-input" type="checkbox" role="switch" @bind="_keepScreenOn" @bind:after="KeepScreenOnChanged" />
+                        <label class="form-check-label" for="keep-screen-on">Keep screen on</label>
+                    </div>
+                }
+                @if (_joined && !_usesAudioSessionOutputModes && !_audioOutputSelectionSupported)
+                {
+                    <span class="text-muted">Audio output is managed by your browser. Speaker and earpiece selection is unavailable.</span>
+                }
+                @if (_joined && _liveTranscriptionSupported)
+                {
                     <label class="voice-quality voice-transcription-model">
                         <span>Transcription model</span>
-                        <select class="form-select form-select-sm" @bind="_transcriptionModel" disabled="@(_busy || _transcriptionEnabled)" aria-describedby="transcription-download-warning">
+                        <select class="form-select form-select-sm" @bind="_transcriptionModel" disabled="@(_busy || _transcriptionEnabled)">
                             <option value="auto">Default (Auto) - Recommended: @TranscriptionModelLabel(_recommendedTranscriptionModel)</option>
                             <option value="tiny">Multilingual Tiny - Fastest, least accurate</option>
                             <option value="base">Multilingual Base - More accurate, slower</option>
@@ -105,21 +117,35 @@
                             <option value="base-en">English Base - More accurate English, slower</option>
                             <option value="small-en">English Small - Most accurate English, slowest</option>
                         </select>
-                        <small id="transcription-download-warning" class="text-muted">Enabling transcription downloads large model files unless already cached. Wi-Fi recommended.</small>
                     </label>
-                    <HxButton Color="ThemeColor.Secondary" Enabled="@(!_busy && (_transcriptionEnabled || _participantIds.Count > 0))" OnClick="ToggleTranscription">
-                        @(_transcriptionEnabled ? "Stop transcription" : "Start transcription")
+                }
+            </div>
+        </section>
+    }
+
+    @if (DebugMode)
+    {
+        <section class="voice-settings mt-3" aria-labelledby="voice-diagnostics-title">
+            <strong id="voice-diagnostics-title">Call diagnostics</strong>
+            <div class="voice-settings-controls mt-2">
+                <HxButton Color="@TurnHealthColor" Enabled="@(!_checkingTurn)" OnClick="CheckTurnHealth">
+                    @TurnHealthButtonText
+                </HxButton>
+                @if (_joined)
+                {
+                    <HxButton Color="ThemeColor.Secondary" OnClick="ToggleDebug">
+                        @(_showDebug ? "Hide ICE debug" : "ICE debug")
                     </HxButton>
                 }
-                <HxButton Color="ThemeColor.Secondary" OnClick="ToggleDebug">
-                    @(_showDebug ? "Hide ICE debug" : "ICE debug")
-                </HxButton>
-                <HxButton Color="ThemeColor.Danger" OnClick="Leave">
-                    @(_participantIds.Count > 0 ? "End call" : "Leave call")
-                </HxButton>
+            </div>
+            @if (_turnHealth != null)
+            {
+                <div class="@TurnHealthMessageCssClass" role="status">
+                    @_turnHealth.Host:@_turnHealth.Port - @_turnHealth.Message
+                </div>
             }
-        </div>
-    </div>
+        </section>
+    }
 
     <div class="voice-presence mt-3">
         <strong>Online</strong>
@@ -181,14 +207,7 @@
         <div class="text-danger mt-2" role="alert">@_error</div>
     }
 
-    @if (_turnHealth != null)
-    {
-        <div class="@TurnHealthMessageCssClass" role="status">
-            @_turnHealth.Host:@_turnHealth.Port - @_turnHealth.Message
-        </div>
-    }
-
-    @if (_showDebug)
+    @if (DebugMode && _showDebug)
     {
         <div class="voice-debug mt-3">
             <div class="voice-debug-header">
@@ -253,6 +272,10 @@
 </section>
 
 @code {
+    [Parameter] public bool AdvancedMode { get; set; }
+
+    [Parameter] public bool DebugMode { get; set; }
+
     private const string VoiceModulePath = "./js/voice-chat.js?v=20261022-2";
 
     private static readonly TimeSpan RingTimeout = TimeSpan.FromSeconds(30);
@@ -329,6 +352,14 @@
     private string TurnHealthMessageCssClass => _turnHealth?.Healthy == true
         ? "voice-health-message mt-2 text-success"
         : "voice-health-message mt-2 text-danger";
+
+    protected override void OnParametersSet()
+    {
+        if (!DebugMode && _showDebug)
+        {
+            HideDebug();
+        }
+    }
 
     protected override void OnInitialized()
     {

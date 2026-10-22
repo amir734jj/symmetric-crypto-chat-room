@@ -98,6 +98,43 @@ pre {
     white-space: pre;
 }
 
+.chat-toolbar,
+.chat-mode-switches {
+    align-items: center;
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.75rem 1.5rem;
+}
+
+.chat-toolbar {
+    justify-content: space-between;
+}
+
+.chat-mode-switches .form-check {
+    margin-bottom: 0;
+}
+
+.voice-settings {
+    border-top: 1px solid #cbd5cf;
+    padding-top: 0.75rem;
+}
+
+.voice-settings-controls {
+    align-items: center;
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.75rem 1rem;
+}
+
+.voice-settings-controls .voice-transcription-model {
+    justify-content: flex-start;
+}
+
+.voice-transcription-warning {
+    display: block;
+    margin-top: 0.5rem;
+}
+
 .voice-channel {
     background: #f4f7f5;
     border: 1px solid #cbd5cf;
@@ -353,6 +390,14 @@ pre {
 
     .voice-channel-actions {
         justify-content: flex-start;
+    }
+
+    .voice-settings-controls .voice-quality {
+        align-items: stretch;
+        flex-direction: column;
+        min-width: 0;
+        white-space: normal;
+        width: 100%;
     }
 
     .voice-transcription-model {
