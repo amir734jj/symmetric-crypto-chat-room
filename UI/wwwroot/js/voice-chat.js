@@ -27,6 +27,7 @@ let poorNetworkSamples = 0;
 let goodVideoNetworkSamples = 0;
 let poorVideoNetworkSamples = 0;
 let adaptationInProgress = false;
+let lastConnectionHealth;
 let screenWakeLock;
 let wakeLockRequestId = 0;
 let keepScreenOn = false;
@@ -65,6 +66,7 @@ export async function initialize(
     }
 
     dotNetReference = reference;
+    lastConnectionHealth = undefined;
     remoteMediaContainer = container;
     localVideoElement = localVideo;
     voiceKey = passwordDerivedKey;
@@ -102,6 +104,7 @@ export async function initialize(
     startQualityAdaptation();
     notifyAudioQualityChanged();
     notifyVideoQualityChanged();
+    notifyConnectionHealth();
 }
 
 async function createMediaKeyConfirmation(base64Key) {
@@ -878,12 +881,14 @@ export function removeParticipant(connectionId) {
     }
 
     if (focusedVideoTile === peer.tile) setFocusedVideoTile(undefined);
+    peer.connection.onconnectionstatechange = null;
     peer.connection.close();
     disconnectTranscriptionStream(connectionId);
     peer.audio.remove();
     peer.tile.remove();
     liveDataRateSamples.delete(connectionId);
     peers.delete(connectionId);
+    notifyConnectionHealth();
     stopLocalAudioIfAlone();
 }
 
@@ -1086,9 +1091,16 @@ async function createPeer(connectionId, participantName) {
         makingOffer: false,
         ignoreOffer: false,
         goodVideoBandwidthSamples: 0,
+        healthPacketSamples: new Map(),
         polite: localConnectionId.localeCompare(connectionId) > 0
     };
     peers.set(connectionId, peer);
+    connection.onconnectionstatechange = () => {
+        peer.connectionHealth = undefined;
+        peer.healthPacketSamples.clear();
+        notifyConnectionHealth();
+    };
+    notifyConnectionHealth();
     const audioSenders = [];
     const videoSenders = [];
     for (const track of localStream.getTracks()) {
@@ -1392,6 +1404,7 @@ async function adaptMediaQuality() {
     adaptationInProgress = true;
     try {
         const samples = await Promise.all([...peers.values()].map(getNetworkSample));
+        notifyConnectionHealth();
         const usableSamples = samples.filter(sample => sample !== null);
         if (usableSamples.length === 0) return;
         await Promise.all(usableSamples.map(adaptPeerVideoBandwidth));
@@ -1451,6 +1464,7 @@ async function adaptMediaQuality() {
         }
     } catch (error) {
         console.warn("Unable to adapt media quality", error);
+        notifyConnectionHealth();
     } finally {
         adaptationInProgress = false;
     }
@@ -1486,9 +1500,12 @@ async function adaptPeerVideoBandwidth(sample) {
 }
 
 async function getNetworkSample(peer) {
+    peer.connectionHealth = undefined;
     if (peer.connection.connectionState !== "connected") return null;
 
     const stats = await peer.connection.getStats();
+    if (peers.get(peer.connectionId) !== peer || peer.connection.connectionState !== "connected") return null;
+    peer.connectionHealth = measureConnectionHealth(peer, stats);
     let selectedPair;
     let remoteInboundAudio;
     let remoteInboundVideo;
@@ -1513,6 +1530,80 @@ async function getNetworkSample(peer) {
     return Object.values(sample).some(value => value !== undefined)
         ? { ...sample, peer }
         : null;
+}
+
+function measureConnectionHealth(peer, stats) {
+    const { selectedPair } = getSelectedCandidatePair(stats);
+    const losses = [];
+    const latencies = [];
+    const jitters = [];
+    let bandwidthLimited = false;
+    if (Number.isFinite(selectedPair?.currentRoundTripTime)) latencies.push(selectedPair.currentRoundTripTime);
+    stats.forEach(report => {
+        if (report.type === "remote-inbound-rtp") {
+            if (Number.isFinite(report.fractionLost)) losses.push(Math.max(0, report.fractionLost));
+            if (Number.isFinite(report.roundTripTime)) latencies.push(report.roundTripTime);
+        }
+        if (report.type === "inbound-rtp") {
+            if (Number.isFinite(report.jitter)) jitters.push(report.jitter);
+            if (Number.isFinite(report.packetsReceived) && Number.isFinite(report.packetsLost)) {
+                const previous = peer.healthPacketSamples.get(report.id);
+                peer.healthPacketSamples.set(report.id, {
+                    received: report.packetsReceived, lost: report.packetsLost
+                });
+                if (previous && report.packetsReceived >= previous.received && report.packetsLost >= previous.lost) {
+                    const received = report.packetsReceived - previous.received;
+                    const lost = report.packetsLost - previous.lost;
+                    if (received + lost > 0) losses.push(lost / (received + lost));
+                }
+            }
+        }
+        if (report.type === "outbound-rtp" && report.qualityLimitationReason === "bandwidth") {
+            bandwidthLimited = true;
+        }
+    });
+    const loss = losses.length ? Math.max(...losses) : undefined;
+    const latency = latencies.length ? Math.max(...latencies) : undefined;
+    const jitter = jitters.length ? Math.max(...jitters) : undefined;
+    const senders = peer.connection.getSenders().filter(sender => sender.track?.readyState === "live");
+    const requiredBitrate = senders.reduce((total, sender) => total + (sender.track.kind === "audio"
+        ? audioQualityProfiles[audioQuality].maxBitrate
+        : sender.track === screenTrack ? 1500000 : videoQualityProfiles[videoQuality].maxBitrate), 0);
+    const available = Number.isFinite(selectedPair?.availableOutgoingBitrate) && requiredBitrate > 0
+        ? selectedPair.availableOutgoingBitrate : undefined;
+    const poor = loss > 0.05 || latency > 0.3 || jitter > 0.06 ||
+        (available !== undefined && available < requiredBitrate * 0.5);
+    const fair = loss > 0.02 || latency > 0.15 || jitter > 0.03 || bandwidthLimited ||
+        (available !== undefined && available < requiredBitrate * 1.2);
+    const details = [];
+    if (loss !== undefined) details.push(`${(loss * 100).toFixed(1)}% packet loss`);
+    if (latency !== undefined) details.push(`${Math.round(latency * 1000)} ms round-trip latency`);
+    if (jitter !== undefined) details.push(`${Math.round(jitter * 1000)} ms jitter`);
+    if (available !== undefined) details.push(`${Math.round(available / 1000)} kbps available / ${Math.round(requiredBitrate / 1000)} kbps required`);
+    if (bandwidthLimited) details.push("browser reports bandwidth limitation");
+    return {
+        level: poor ? "poor" : fair ? "fair" : details.length ? "healthy" : "checking",
+        detail: details.length ? details.join("; ") : "Media measurements unavailable"
+    };
+}
+
+function notifyConnectionHealth() {
+    const severity = { healthy: 0, checking: 1, fair: 2, poor: 3 };
+    let health = { level: "waiting", detail: "Waiting for another participant" };
+    for (const peer of peers.values()) {
+        const state = peer.connection.connectionState;
+        const current = state === "failed" || state === "disconnected" || state === "closed"
+            ? { level: "poor", detail: `Media connection ${state}` }
+            : state === "connected" && peer.connectionHealth
+                ? peer.connectionHealth
+                : { level: "checking", detail: state === "connected" ? "Media measurements unavailable" : "Connecting media" };
+        if (health.level === "waiting" || severity[current.level] > severity[health.level]) health = current;
+    }
+    const notification = `${health.level}:${health.detail}`;
+    if (notification === lastConnectionHealth) return;
+    lastConnectionHealth = notification;
+    dotNetReference?.invokeMethodAsync("ConnectionHealthChanged", health.level, health.detail)
+        .catch(error => console.warn("Unable to update call connection health", error));
 }
 
 function notifyAudioQualityChanged() {

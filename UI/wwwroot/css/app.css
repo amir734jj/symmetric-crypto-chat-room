@@ -167,6 +167,36 @@ pre {
     flex: 0 0 auto;
 }
 
+.voice-signal-health {
+    display: inline-block;
+    height: 12px;
+    margin-left: 0.35rem;
+    vertical-align: middle;
+    width: 14px;
+}
+
+.voice-signal-health svg {
+    display: block;
+    height: 100%;
+    width: 100%;
+}
+
+.voice-signal-bar {
+    fill: #cbd5cf;
+}
+
+.voice-signal-healthy .voice-signal-bar {
+    fill: #198754;
+}
+
+.voice-signal-fair .voice-signal-bar:nth-child(-n+2) {
+    fill: #996c00;
+}
+
+.voice-signal-poor .voice-signal-bar:first-child {
+    fill: #dc3545;
+}
+
 .voice-channel-actions {
     display: flex;
     flex-wrap: wrap;

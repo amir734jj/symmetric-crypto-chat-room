@@ -10,6 +10,14 @@
             <strong>Voice &amp; video</strong>
             @if (_joined)
             {
+                <span class="voice-signal-health @SignalHealthCssClass" role="status" aria-live="polite" aria-atomic="true" title="@SignalHealthLabel">
+                    <svg viewBox="0 0 14 12" aria-hidden="true" focusable="false">
+                        <rect class="voice-signal-bar" x="1" y="8" width="3" height="4" rx="0.5" />
+                        <rect class="voice-signal-bar" x="5" y="4" width="3" height="8" rx="0.5" />
+                        <rect class="voice-signal-bar" x="9" y="0" width="3" height="12" rx="0.5" />
+                    </svg>
+                    <span class="visually-hidden">@SignalHealthLabel</span>
+                </span>
                 <span class="ms-2 text-muted">@(_participantIds.Count + 1) connected</span>
             }
         </div>
@@ -72,7 +80,7 @@
         </div>
     </div>
 
-    @if (_joined && _liveTranscriptionSupported)
+    @if (AdvancedMode && _joined && _liveTranscriptionSupported)
     {
         <small class="voice-transcription-warning text-muted">Starting transcription downloads large model files unless already cached. Wi-Fi recommended.</small>
     }
@@ -278,7 +286,7 @@
 
     [Parameter] public bool DebugMode { get; set; }
 
-    private const string VoiceModulePath = "./js/voice-chat.js?v=20261022-7";
+    private const string VoiceModulePath = "./js/voice-chat.js?v=20261022-8";
 
     private static readonly TimeSpan RingTimeout = TimeSpan.FromSeconds(30);
     private readonly HashSet<string> _participantIds = [];
@@ -330,6 +338,18 @@
     private string _transcriptionModel = "auto";
     private string _recommendedTranscriptionModel = "tiny";
     private TurnHealthStatus? _turnHealth;
+    private string _connectionHealth = "waiting";
+    private string _connectionHealthDetail = "Waiting for another participant";
+
+    private string SignalHealthCssClass => _connectionHealth switch
+    {
+        "healthy" => "voice-signal-healthy",
+        "fair" => "voice-signal-fair",
+        "poor" => "voice-signal-poor",
+        _ => "voice-signal-checking"
+    };
+
+    private string SignalHealthLabel => $"Call connection: {_connectionHealth}. {_connectionHealthDetail}";
 
     private IEnumerable<OnlineUser> OtherOnlineUsers => State.OnlineUsers
         .Where(user => user.ConnectionId != SignalRStateManager.ConnectionId);
@@ -1037,6 +1057,17 @@
     }
 
     [JSInvokable]
+    public Task ConnectionHealthChanged(string health, string detail)
+    {
+        return InvokeAsync(() =>
+        {
+            _connectionHealth = health;
+            _connectionHealthDetail = detail;
+            StateHasChanged();
+        });
+    }
+
+    [JSInvokable]
     public Task AudioQualityAdapted(string quality)
     {
         return InvokeAsync(() =>
@@ -1244,6 +1275,8 @@
 
         _participantIds.Clear();
         _joined = false;
+        _connectionHealth = "waiting";
+        _connectionHealthDetail = "Waiting for another participant";
         _muted = false;
         _videoEnabled = false;
         _screenSharing = false;

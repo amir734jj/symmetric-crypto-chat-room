@@ -1012,6 +1012,191 @@ function videoNetworkStats(bandwidth, loss = 0, roundTripTime = 0.05) {
     ]);
 }
 
+function latestConnectionHealth(h) {
+    const [, level, detail] = h.callbacks.filter(([method]) => method === "ConnectionHealthChanged").at(-1);
+    return { level, detail };
+}
+
+for (const [name, bandwidth, loss, latency, expected] of [
+    ["healthy measurements", 100000, 0.01, 0.05, "healthy"],
+    ["healthy loss boundary", 100000, 0.02, 0.05, "healthy"],
+    ["degraded packet loss", 100000, 0.021, 0.05, "fair"],
+    ["poor loss boundary", 100000, 0.05, 0.05, "fair"],
+    ["poor packet loss", 100000, 0.051, 0.05, "poor"],
+    ["healthy latency boundary", 100000, 0, 0.15, "healthy"],
+    ["degraded latency", 100000, 0, 0.151, "fair"],
+    ["poor latency boundary", 100000, 0, 0.3, "fair"],
+    ["poor latency", 100000, 0, 0.301, "poor"],
+    ["healthy bandwidth headroom boundary", 19200, 0, 0.05, "healthy"],
+    ["insufficient bandwidth headroom", 19199, 0, 0.05, "fair"],
+    ["poor bandwidth boundary", 8000, 0, 0.05, "fair"],
+    ["poor bandwidth", 7999, 0, 0.05, "poor"],
+    ["zero available bandwidth", 0, 0, 0.05, "poor"]
+]) {
+    test(`call health: ${name}`, async () => {
+        const h = await createHarness();
+        await h.join(true, "low");
+        await h.voice.connectToParticipants([{ connectionId: "remote", name: "Remote" }]);
+        h.connections[0].stats = videoNetworkStats(bandwidth, loss, latency);
+        await h.adaptQuality();
+        assert.equal(latestConnectionHealth(h).level, expected);
+        assert.match(latestConnectionHealth(h).detail, /packet loss.*round-trip latency.*kbps available/);
+        h.voice.leave();
+    });
+}
+
+test("call health waits for peers and measurements, and clears after the last departure", async () => {
+    const h = await createHarness();
+    await h.join(true);
+    assert.equal(latestConnectionHealth(h).level, "waiting");
+    await h.voice.connectToParticipants([{ connectionId: "remote", name: "Remote" }]);
+    await h.adaptQuality();
+    assert.equal(latestConnectionHealth(h).level, "checking");
+    h.connections[0].stats = videoNetworkStats(100000);
+    await h.adaptQuality();
+    assert.equal(latestConnectionHealth(h).level, "healthy");
+    h.voice.removeParticipant("remote");
+    assert.equal(latestConnectionHealth(h).level, "waiting");
+    h.voice.leave();
+});
+
+for (const [jitter, expected] of [[0.03, "healthy"], [0.031, "fair"], [0.06, "fair"], [0.061, "poor"]]) {
+    test(`call health: incoming jitter ${jitter}`, async () => {
+        const h = await createHarness();
+        await h.join(true, "low");
+        await h.voice.connectToParticipants([{ connectionId: "remote", name: "Remote" }]);
+        h.connections[0].stats = new Map([["incoming", { type: "inbound-rtp", jitter }]]);
+        await h.adaptQuality();
+        assert.equal(latestConnectionHealth(h).level, expected);
+        h.voice.leave();
+    });
+}
+
+test("call health measures recent incoming packet loss rather than lifetime loss and handles counter resets", async () => {
+    const h = await createHarness();
+    await h.join(true, "low");
+    await h.voice.connectToParticipants([{ connectionId: "remote", name: "Remote" }]);
+    const connection = h.connections[0];
+    const setPackets = (received, lost) => {
+        connection.stats = new Map([["incoming", {
+            id: "incoming", type: "inbound-rtp", packetsReceived: received, packetsLost: lost
+        }]]);
+    };
+    setPackets(10000, 1000);
+    await h.adaptQuality();
+    assert.equal(latestConnectionHealth(h).level, "checking");
+    setPackets(10100, 1000);
+    await h.adaptQuality();
+    assert.equal(latestConnectionHealth(h).level, "healthy");
+    setPackets(10190, 1010);
+    await h.adaptQuality();
+    assert.equal(latestConnectionHealth(h).level, "poor");
+    assert.match(latestConnectionHealth(h).detail, /10.0% packet loss/);
+    setPackets(10, 0);
+    await h.adaptQuality();
+    assert.equal(latestConnectionHealth(h).level, "checking");
+    h.voice.leave();
+});
+
+test("call health includes camera bandwidth needs, not just audio", async () => {
+    const h = await startVideoHarness("low");
+    for (const connection of h.connections) connection.stats = videoNetworkStats(100000);
+    await h.adaptQuality();
+    assert.equal(latestConnectionHealth(h).level, "poor");
+    assert.match(latestConnectionHealth(h).detail, /266 kbps required/);
+    h.voice.leave();
+});
+
+test("call health uses the screen-sharing bitrate rather than the camera preset", async () => {
+    const screen = { kind: "video", readyState: "live", stop() {}, addEventListener() {} };
+    const h = await createHarness({
+        navigator: {
+            mediaDevices: {
+                getSupportedConstraints: () => ({}),
+                getDisplayMedia: async () => ({ getVideoTracks: () => [screen] })
+            }
+        }
+    });
+    await h.join(true, "very-low");
+    await h.voice.connectToParticipants([{ connectionId: "remote", name: "Remote" }]);
+    await h.voice.setScreenSharing(true);
+    h.connections[0].stats = videoNetworkStats(500000);
+    await h.adaptQuality();
+    assert.equal(latestConnectionHealth(h).level, "poor");
+    assert.match(latestConnectionHealth(h).detail, /1512 kbps required/);
+    h.voice.leave();
+});
+
+test("call health uses the transport-selected candidate pair and never treats an unmeasured peer as healthy", async () => {
+    const h = await startVideoHarness("low");
+    h.connections[0].stats = new Map([
+        ["transport", { type: "transport", selectedCandidatePairId: "selected" }],
+        ["selected", {
+            id: "selected", type: "candidate-pair", state: "succeeded",
+            availableOutgoingBitrate: 5000000, currentRoundTripTime: 0.05
+        }]
+    ]);
+    await h.adaptQuality();
+    assert.equal(latestConnectionHealth(h).level, "checking");
+    h.voice.removeParticipant("fast-peer");
+    assert.equal(latestConnectionHealth(h).level, "healthy");
+    h.voice.leave();
+});
+
+test("call health ignores statistics arriving after a participant leaves", async () => {
+    const h = await createHarness();
+    await h.join(true, "low");
+    await h.voice.connectToParticipants([{ connectionId: "remote", name: "Remote" }]);
+    let resolveStats;
+    h.connections[0].getStats = () => new Promise(resolve => { resolveStats = resolve; });
+    const sampling = h.adaptQuality();
+    h.voice.removeParticipant("remote");
+    resolveStats(videoNetworkStats(0, 0.5));
+    await sampling;
+    assert.equal(latestConnectionHealth(h).level, "waiting");
+    h.voice.leave();
+});
+
+test("call health uses the worst peer, updates immediately on failure, and recovers only with fresh measurements", async () => {
+    const h = await startVideoHarness("low");
+    h.connections[0].stats = videoNetworkStats(5000000);
+    h.connections[1].stats = videoNetworkStats(5000000, 0.2);
+    await h.adaptQuality();
+    assert.equal(latestConnectionHealth(h).level, "poor");
+    h.connections[1].stats = videoNetworkStats(5000000);
+    await h.adaptQuality();
+    assert.equal(latestConnectionHealth(h).level, "healthy");
+    for (const state of ["failed", "disconnected"]) {
+        h.connections[1].connectionState = state;
+        h.connections[1].onconnectionstatechange();
+        assert.equal(latestConnectionHealth(h).level, "poor");
+        assert.match(latestConnectionHealth(h).detail, new RegExp(state));
+    }
+    h.connections[1].connectionState = "connected";
+    h.connections[1].onconnectionstatechange();
+    assert.equal(latestConnectionHealth(h).level, "checking");
+    await h.adaptQuality();
+    assert.equal(latestConnectionHealth(h).level, "healthy");
+    h.voice.leave();
+});
+
+test("call health reports browser bandwidth limitation and does not stay green when statistics fail", async () => {
+    const warnings = [];
+    const h = await createHarness({ console: { ...console, warn: (...args) => warnings.push(args) } });
+    await h.join(true, "low");
+    await h.voice.connectToParticipants([{ connectionId: "remote", name: "Remote" }]);
+    h.connections[0].stats = new Map([["outgoing", {
+        type: "outbound-rtp", kind: "video", qualityLimitationReason: "bandwidth"
+    }]]);
+    await h.adaptQuality();
+    assert.equal(latestConnectionHealth(h).level, "fair");
+    h.connections[0].getStats = async () => { throw new Error("Statistics unavailable"); };
+    await h.adaptQuality();
+    assert.equal(latestConnectionHealth(h).level, "checking");
+    assert.ok(warnings.some(([message]) => message.includes("Unable to adapt media quality")));
+    h.voice.leave();
+});
+
 test("fixed Low video reduces bitrate, frame rate and resolution below the preset for a weak receiver", async () => {
     const h = await startVideoHarness();
     h.connections[0].stats = videoNetworkStats(150000);
