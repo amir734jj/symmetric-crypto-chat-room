@@ -25,7 +25,7 @@
         <div class="voice-channel-actions">
             @if (!_joined)
             {
-                <HxButton Color="ThemeColor.Success" Enabled="@(!_busy)" OnClick="Join">
+                <HxButton Color="ThemeColor.Success" Enabled="@(!_busy)" OnClick="@(() => _incomingCallerConnectionId == null ? Join() : AcceptCall())">
                     Join call
                 </HxButton>
             }
@@ -742,14 +742,19 @@
 
         try
         {
-            await SignalRStateManager.RingVoice(user.ConnectionId);
             _outgoingCallConnectionId = user.ConnectionId;
             _outgoingCallName = user.Name;
             _callStatus = $"Ringing {user.Name}... (30 seconds)";
             StartOutgoingCallTimeout(user.ConnectionId, user.Name);
+            await SignalRStateManager.RingVoice(user.ConnectionId);
         }
         catch (Exception exception)
         {
+            if (_outgoingCallConnectionId == user.ConnectionId)
+            {
+                ClearOutgoingCall();
+                _callStatus = null;
+            }
             _error = $"Unable to ring {user.Name}: {exception.Message}";
         }
     }
@@ -796,6 +801,7 @@
                 if (_outgoingCallConnectionId != targetConnectionId) return;
 
                 await SignalRStateManager.CancelVoiceCall(targetConnectionId, true);
+                if (_outgoingCallConnectionId != targetConnectionId || cancellationToken.IsCancellationRequested) return;
                 ClearOutgoingCall();
                 _callStatus = $"{targetName} did not answer";
                 StateHasChanged();
@@ -804,12 +810,14 @@
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
         {
         }
-        catch
+        catch (Exception exception)
         {
             await InvokeAsync(() =>
             {
+                if (_outgoingCallConnectionId != targetConnectionId || cancellationToken.IsCancellationRequested) return;
                 ClearOutgoingCall();
-                _callStatus = $"{targetName} did not answer";
+                _callStatus = "Unable to cancel the unanswered call";
+                _error = exception.Message;
                 StateHasChanged();
             });
         }
@@ -872,21 +880,23 @@
         await ClearIncomingCall();
         if (callerConnectionId == null) return;
 
-        if (!_joined)
-        {
-            await Join();
-        }
-
         try
         {
-            await SignalRStateManager.RespondVoiceCall(callerConnectionId, _joined);
-            _callStatus = _joined ? "Call accepted" : "Unable to join the call";
+            await SignalRStateManager.RespondVoiceCall(callerConnectionId, true);
         }
         catch (Exception exception)
         {
             _callStatus = "Call is no longer pending";
             _error = exception.Message;
+            return;
         }
+
+        _callStatus = "Call accepted - connecting...";
+        if (!_joined)
+        {
+            await Join();
+        }
+        _callStatus = _joined ? "Call accepted" : "Unable to join the call";
     }
 
     private async Task DeclineCall()

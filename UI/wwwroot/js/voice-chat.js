@@ -1,4 +1,4 @@
-import { getNetworkConnection, isLowBandwidthMobileConnection, isMobileDevice } from "./media-defaults.js";
+import { getNetworkConnection, isMobileDevice } from "./media-defaults.js";
 
 let dotNetReference;
 let remoteMediaContainer;
@@ -522,7 +522,7 @@ export function usesAudioSessionOutputModes() {
 
 export function supportsLiveTranscription() {
     return Boolean(window.AudioContext || window.webkitAudioContext) && "Worker" in window &&
-        !isLowBandwidthMobileConnection();
+        !isMobileDevice();
 }
 
 function handleNetworkConnectionChange() {
@@ -552,8 +552,8 @@ export async function setTranscriptionEnabled(enabled, selectedModel = "auto") {
             throw new Error("Connect to another participant before starting transcription");
         }
         if (!supportsLiveTranscription()) {
-            if (isLowBandwidthMobileConnection()) {
-                throw new Error("Transcription downloads are disabled on this low-bandwidth mobile connection");
+            if (isMobileDevice()) {
+                throw new Error("Live transcription is not available on mobile devices");
             }
             throw new Error("Live transcription is not supported by this browser");
         }

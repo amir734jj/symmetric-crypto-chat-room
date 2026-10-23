@@ -1,8 +1,8 @@
 export async function derivePayloadKey(password, salt) {
-    if (typeof password !== "string") throw new TypeError("Password must be a string");
     if (!(salt instanceof Uint8Array) || salt.length !== 16) {
         throw new TypeError("Payload key derivation requires a 16-byte salt");
     }
+    if (typeof password !== "string") throw new TypeError("Password must be a string");
     if (!globalThis.crypto?.subtle) {
         throw new Error("Password encryption requires Web Crypto over HTTPS or localhost");
     }

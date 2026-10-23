@@ -506,7 +506,6 @@ for (const [navigator, model] of [
     [{ deviceMemory: 8, hardwareConcurrency: 4 }, "tiny"],
     [{ deviceMemory: 8, hardwareConcurrency: 8 }, "base"],
     [{ deviceMemory: 16, hardwareConcurrency: 16 }, "small"],
-    [{ deviceMemory: 16, hardwareConcurrency: 16, userAgentData: { mobile: true } }, "tiny"],
     [{ deviceMemory: undefined, hardwareConcurrency: undefined }, "tiny"]
 ]) {
     test(`Auto model recommendation: ${JSON.stringify(navigator)} -> ${model}`, async () => {
@@ -693,6 +692,8 @@ for (const [device, navigator, quality] of [
     ["Android", { userAgent: "Mozilla/5.0 (Linux; Android 14)" }, "very-low"],
     ["iPhone", { userAgent: "Mozilla/5.0 (iPhone; CPU iPhone OS 18_0)" }, "very-low"],
     ["iPad", { userAgent: "Mozilla/5.0 (iPad; CPU OS 18_0)" }, "very-low"],
+    ["iPod", { userAgent: "Mozilla/5.0 (iPod)" }, "very-low"],
+    ["generic mobile", { userAgent: "Mobile" }, "very-low"],
     ["desktop-mode iPad", { userAgent: "Mozilla/5.0 (Macintosh)", platform: "MacIntel", maxTouchPoints: 5 }, "very-low"],
     ["client hints mobile", { userAgentData: { mobile: true } }, "very-low"],
     ["Windows desktop", { userAgent: "Mozilla/5.0 (Windows NT 10.0)", maxTouchPoints: 0 }, "auto"],
@@ -705,6 +706,13 @@ for (const [device, navigator, quality] of [
         assert.deepEqual(h.imports, []);
         assert.equal(h.contexts.length, 0);
         await h.join(true, quality);
+        assert.equal(h.voice.supportsLiveTranscription(), quality === "auto");
+        if (quality === "very-low") {
+            await assert.rejects(h.voice.setTranscriptionEnabled(true), /not available on mobile/);
+            assert.deepEqual(h.imports, []);
+            assert.equal(h.workers.length, 1);
+            assert.equal(h.contexts.length, 0);
+        }
         assert.ok(h.callbacks.some(([method, value]) =>
             method === "AudioQualityAdapted" && value === (quality === "auto" ? "standard" : "very-low")));
         assert.ok(h.callbacks.some(([method, value]) =>
@@ -737,49 +745,63 @@ test("mobile Very Low caps actual senders from the start and preserves manual qu
     h.voice.leave();
 });
 
-for (const [name, connection, allowed] of [
-    ["Data Saver", { saveData: true, effectiveType: "4g", downlink: 10 }, false],
-    ["slow 2G", { effectiveType: "slow-2g" }, false],
-    ["2G", { effectiveType: "2g" }, false],
-    ["3G", { effectiveType: "3g", downlink: 2 }, false],
-    ["slow 4G", { effectiveType: "4g", downlink: 1.49 }, false],
-    ["offline estimate", { downlink: 0 }, false],
-    ["threshold 4G", { effectiveType: "4g", downlink: 1.5 }, true],
-    ["fast Wi-Fi", { effectiveType: "4g", downlink: 20 }, true],
-    ["missing network estimates", {}, true]
+for (const [name, connection] of [
+    ["Data Saver", { saveData: true, effectiveType: "4g", downlink: 10 }],
+    ["slow 2G", { effectiveType: "slow-2g" }],
+    ["2G", { effectiveType: "2g" }],
+    ["3G", { effectiveType: "3g", downlink: 2 }],
+    ["slow 4G", { effectiveType: "4g", downlink: 1.49 }],
+    ["offline estimate", { downlink: 0 }],
+    ["threshold 4G", { effectiveType: "4g", downlink: 1.5 }],
+    ["fast Wi-Fi", { effectiveType: "4g", downlink: 20 }],
+    ["missing network estimates", {}]
 ]) {
     test(`mobile transcription availability: ${name}`, async () => {
         const h = await createHarness({ navigator: { userAgent: "Android", connection } });
-        assert.equal(h.voice.supportsLiveTranscription(), allowed);
+        assert.equal(h.voice.supportsLiveTranscription(), false);
         await h.join(true, "low");
-        if (!allowed) {
-            await assert.rejects(h.voice.setTranscriptionEnabled(true), /low-bandwidth mobile/);
-            assert.deepEqual(h.imports, []);
-            assert.equal(h.contexts.length, 0);
-        }
+        await assert.rejects(h.voice.setTranscriptionEnabled(true), /not available on mobile/);
+        assert.deepEqual(h.imports, []);
+        assert.equal(h.contexts.length, 0);
+        assert.equal(h.workers.length, 1);
         h.voice.leave();
     });
 }
 
-test("unknown mobile connection API and desktop Data Saver preserve transcription availability", async () => {
-    for (const navigator of [
-        { userAgent: "iPhone" },
-        { userAgent: "Windows NT", connection: { saveData: true, effectiveType: "2g", downlink: 0.1 } }
+test("missing connection APIs never enable mobile transcription and desktop Data Saver remains supported", async () => {
+    for (const [navigator, available] of [
+        [{ userAgent: "iPhone" }, false],
+        [{ userAgent: "Windows NT", connection: { saveData: true, effectiveType: "2g", downlink: 0.1 } }, true]
     ]) {
         const h = await createHarness({ navigator });
-        assert.equal(h.voice.supportsLiveTranscription(), true);
+        assert.equal(h.voice.supportsLiveTranscription(), available);
     }
 });
 
-test("connection changes update transcription availability while keeping an active session stoppable", async () => {
-    const connection = { downlink: 10, effectiveType: "4g" };
+test("a faster mobile connection never enables transcription", async () => {
+    const connection = { downlink: 0.5, effectiveType: "3g" };
     const h = await createHarness({ navigator: { userAgent: "Android", connection } });
+    await h.join(true, "low");
+    connection.downlink = 100;
+    connection.effectiveType = "4g";
+    h.networkChanged();
+    assert.ok(h.callbacks.some(([method, available]) =>
+        method === "TranscriptionAvailabilityChanged" && available === false));
+    await assert.rejects(h.voice.setTranscriptionEnabled(true), /not available on mobile/);
+    assert.deepEqual(h.imports, []);
+    assert.equal(h.workers.length, 1);
+    h.voice.leave();
+});
+
+test("desktop connection changes keep transcription available and an active session stoppable", async () => {
+    const connection = { downlink: 10, effectiveType: "4g" };
+    const h = await createHarness({ navigator: { userAgent: "Windows NT", connection } });
     await h.join(true, "low");
     await h.voice.setTranscriptionEnabled(true);
     connection.downlink = 0.5;
     h.networkChanged();
     assert.ok(h.callbacks.some(([method, available]) =>
-        method === "TranscriptionAvailabilityChanged" && available === false));
+        method === "TranscriptionAvailabilityChanged" && available === true));
     assert.notEqual(h.workers[1].terminated, true);
     assert.equal(await h.voice.setTranscriptionEnabled(false), false);
     assert.equal(h.workers[1].terminated, true);
@@ -791,11 +813,11 @@ test("connection changes update transcription availability while keeping an acti
     assert.equal(h.connectionListeners.size, 0);
 });
 
-test("a connection becoming slow during the lazy import prevents model and worker downloads", async () => {
-    const connection = { downlink: 10 };
+test("mobile detection during the lazy import prevents model and worker downloads", async () => {
+    const userAgentData = { mobile: false };
     const h = await createHarness({
-        navigator: { userAgent: "Android", connection },
-        beforeImport() { connection.downlink = 0.5; }
+        navigator: { userAgentData },
+        beforeImport() { userAgentData.mobile = true; }
     });
     await h.join(true, "low");
     await assert.rejects(h.voice.setTranscriptionEnabled(true), /no longer supports/);

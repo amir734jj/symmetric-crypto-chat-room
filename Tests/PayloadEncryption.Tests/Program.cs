@@ -7,6 +7,17 @@ using Microsoft.JSInterop;
 using Models;
 using UI;
 
+foreach (var (password, channel, expectedHex) in new[]
+{
+    ("cat", "public", "56618186cf40374fe1ecaea0b787d4171b7efa40b03ceffe66932588687e8cc5"),
+    ("p\u00e4ss\uD83D\uDD11", "private-room", "d32c2bab084296b3e9a066d7959d4cf53d516c6d03fdc19cf2fea712bddf6a5f")
+})
+{
+    Check(HashingUtility.DeriveVoiceKey(password, channel).SequenceEqual(Convert.FromHexString(expectedHex)),
+        "C# voice derivation must match independent PBKDF2-SHA256 vectors without changing existing media keys");
+}
+Console.WriteLine("PASS: C# voice key derivation matches independent short-password and Unicode PBKDF2 vectors");
+
 var cipher = new SymmetricCryptography();
 var keyDerivation = new TestKeyDerivation();
 var service = new PayloadEncryptionService(cipher, NullLogger<PayloadEncryptionService>.Instance, keyDerivation);
