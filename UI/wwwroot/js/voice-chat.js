@@ -1,4 +1,4 @@
-import { getNetworkConnection, isLowBandwidthMobileConnection, isMobileDevice } from "./media-defaults.js?v=20261022-2";
+import { getNetworkConnection, isLowBandwidthMobileConnection, isMobileDevice } from "./media-defaults.js";
 
 let dotNetReference;
 let remoteMediaContainer;
@@ -77,7 +77,7 @@ export async function initialize(
     videoQualityMode = normalizeVideoQualityMode(selectedVideoQuality);
     videoQuality = videoQualityMode === "auto" ? "standard" : videoQualityMode;
     encryptionWorker = new Worker(
-        new URL("./voice-crypto-worker.js?version=vp8-loss-recovery-v3", import.meta.url),
+        new URL("./voice-crypto-worker.js", import.meta.url),
         { type: "module" });
 
     const host = turnCredentials.host || window.location.hostname;
@@ -128,16 +128,34 @@ function serializeSessionDescription(description) {
 
 function parseSessionDescription(messageJson) {
     const message = JSON.parse(messageJson);
-    if (message.error === "mediaKeyMismatch") {
-        throw new Error("Cannot join the media bridge because the participants are using different passwords");
-    }
-    if (!message.mediaKeyConfirmation || message.mediaKeyConfirmation !== mediaKeyConfirmation) {
-        throw new Error("Cannot join the media bridge because the participants are using different passwords");
-    }
     if (!message.description?.type || !message.description?.sdp) {
         throw new Error("The media bridge received an invalid session description");
     }
-    return message.description;
+    return {
+        description: message.description,
+        mediaReadable: Boolean(message.mediaKeyConfirmation) && message.mediaKeyConfirmation === mediaKeyConfirmation
+    };
+}
+
+function updatePeerMediaReadability(peer, readable) {
+    peer.mediaReadable = readable;
+    peer.audio.muted = !readable;
+    peer.video.hidden = !readable;
+    peer.focusButton.hidden = !readable;
+    peer.unreadableStatus.hidden = readable;
+    encryptionWorker.postMessage({
+        type: "media-readability",
+        senderId: peer.connectionId,
+        contextId: localConnectionId,
+        readable
+    });
+    if (!readable) {
+        disconnectTranscriptionStream(peer.connectionId);
+        if (focusedVideoTile === peer.tile) setFocusedVideoTile(undefined);
+    } else if (peer.audio.srcObject) {
+        connectTranscriptionStream(peer.connectionId, peer.audio.srcObject);
+    }
+    peer.updateVideoVisibility();
 }
 
 export async function connectToParticipants(participants) {
@@ -157,16 +175,7 @@ export function updateParticipantNames(participants) {
 }
 
 export async function receiveOffer(senderConnectionId, senderName, offerJson) {
-    let offer;
-    try {
-        offer = parseSessionDescription(offerJson);
-    } catch (error) {
-        await dotNetReference.invokeMethodAsync(
-            "SendVoiceAnswer",
-            senderConnectionId,
-            JSON.stringify({ error: "mediaKeyMismatch" }));
-        throw error;
-    }
+    const offer = parseSessionDescription(offerJson);
 
     await ensureLocalAudio();
 
@@ -176,10 +185,11 @@ export async function receiveOffer(senderConnectionId, senderName, offerJson) {
     peer.ignoreOffer = !peer.polite && offerCollision;
     if (peer.ignoreOffer) return;
 
+    updatePeerMediaReadability(peer, offer.mediaReadable);
     if (offerCollision) {
         await peer.connection.setLocalDescription({ type: "rollback" });
     }
-    await peer.connection.setRemoteDescription(offer);
+    await peer.connection.setRemoteDescription(offer.description);
     await addPendingCandidates(peer);
 
     const answer = await peer.connection.createAnswer();
@@ -194,7 +204,9 @@ export async function receiveAnswer(senderConnectionId, answerJson) {
     const peer = peers.get(senderConnectionId);
     if (!peer || peer.connection.signalingState !== "have-local-offer") return;
 
-    await peer.connection.setRemoteDescription(parseSessionDescription(answerJson));
+    const answer = parseSessionDescription(answerJson);
+    updatePeerMediaReadability(peer, answer.mediaReadable);
+    await peer.connection.setRemoteDescription(answer.description);
     await addPendingCandidates(peer);
 }
 
@@ -565,7 +577,7 @@ export async function setTranscriptionEnabled(enabled, selectedModel = "auto") {
             () => {
                 const streams = new Map([["local", localStream]]);
                 for (const [connectionId, peer] of peers) {
-                    if (peer.audio.srcObject) streams.set(connectionId, peer.audio.srcObject);
+                    if (peer.mediaReadable && peer.audio.srcObject) streams.set(connectionId, peer.audio.srcObject);
                 }
                 return streams;
             });
@@ -886,6 +898,12 @@ export function removeParticipant(connectionId) {
     disconnectTranscriptionStream(connectionId);
     peer.audio.remove();
     peer.tile.remove();
+    encryptionWorker.postMessage({
+        type: "media-readability",
+        senderId: connectionId,
+        contextId: localConnectionId,
+        readable: null
+    });
     liveDataRateSamples.delete(connectionId);
     peers.delete(connectionId);
     notifyConnectionHealth();
@@ -1049,6 +1067,7 @@ async function createPeer(connectionId, participantName) {
     const audio = document.createElement("audio");
     audio.autoplay = true;
     audio.playsInline = true;
+    audio.muted = true;
     if (selectedAudioOutputId && typeof audio.setSinkId === "function") {
         await audio.setSinkId(selectedAudioOutputId);
     }
@@ -1071,6 +1090,7 @@ async function createPeer(connectionId, participantName) {
     const video = document.createElement("video");
     video.autoplay = true;
     video.playsInline = true;
+    video.hidden = true;
     video.className = "voice-video voice-video-remote";
     video.setAttribute("aria-label", `${participantName || "Remote participant"} camera`);
     tile.appendChild(video);
@@ -1078,6 +1098,12 @@ async function createPeer(connectionId, participantName) {
     const caption = document.createElement("figcaption");
     caption.textContent = participantName || "Participant";
     tile.appendChild(caption);
+    const unreadableStatus = document.createElement("p");
+    unreadableStatus.className = "text-muted text-center";
+    unreadableStatus.textContent = "Unreadable media - different password";
+    unreadableStatus.setAttribute("role", "status");
+    unreadableStatus.hidden = true;
+    tile.appendChild(unreadableStatus);
     remoteMediaContainer.appendChild(tile);
 
     const peer = {
@@ -1087,6 +1113,14 @@ async function createPeer(connectionId, participantName) {
         video,
         tile,
         caption,
+        focusButton,
+        unreadableStatus,
+        mediaReadable: false,
+        updateVideoVisibility() {
+            tile.hidden = unreadableStatus.hidden && (!peer.mediaReadable ||
+                !video.srcObject?.getVideoTracks().some(track => !track.muted && track.readyState !== "ended"));
+            if (tile.hidden && focusedVideoTile === tile) setFocusedVideoTile(undefined);
+        },
         pendingCandidates: [],
         makingOffer: false,
         ignoreOffer: false,
@@ -1124,7 +1158,7 @@ async function createPeer(connectionId, participantName) {
         }
         mediaElement.srcObject = mediaStream;
 
-        if (event.track.kind === "audio") {
+        if (event.track.kind === "audio" && peer.mediaReadable) {
             connectTranscriptionStream(connectionId, mediaStream);
         }
 
@@ -1134,9 +1168,7 @@ async function createPeer(connectionId, participantName) {
             });
             const updateVideoVisibility = () => {
                 if (mediaElement.srcObject !== mediaStream) return;
-                tile.hidden = mediaStream.getVideoTracks()
-                    .every(track => track.muted || track.readyState === "ended");
-                if (tile.hidden && focusedVideoTile === tile) setFocusedVideoTile(undefined);
+                peer.updateVideoVisibility();
             };
             event.track.addEventListener("mute", updateVideoVisibility);
             event.track.addEventListener("unmute", updateVideoVisibility);
@@ -1238,7 +1270,10 @@ function setReceiverTransform(receiver, senderId, mediaKind) {
     if (receiver.transform) return;
     receiver.transform = new RTCRtpScriptTransform(
         encryptionWorker,
-        { operation: "decrypt", key: voiceKey, senderId, mediaKind, contextId: localConnectionId });
+        {
+            operation: "decrypt", key: voiceKey, senderId, mediaKind, contextId: localConnectionId,
+            mediaReadable: peers.get(senderId)?.mediaReadable === true
+        });
 }
 
 async function negotiatePeer(connectionId, peer) {

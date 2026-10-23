@@ -273,13 +273,7 @@ public sealed class SignalRStateManager : AuthenticationStateProvider, IDisposab
     {
         _state.StateEnum |= SignalRStateEnum.Receiving;   
         
-        var isValid = _payloadEncryptionService.PayloadIsValid(_state.UserInfo!.Password, messagePayload.Token);
-        
-        // If message is valid then decrypt, otherwise don't bother
-        if (isValid)
-        {
-            messagePayload = await _payloadEncryptionService.DecryptPayloadAsync(_state.UserInfo!.Password, messagePayload);
-        }
+        var isValid = await _payloadEncryptionService.TryDecryptPayloadAsync(_state.UserInfo!.Password, messagePayload);
 
         _state.Messages.AddFirst((messagePayload, isValid));
 

@@ -28,6 +28,12 @@ async function transformFrames(operation, frames, mediaKind = "video", options =
     const source = await readFile(path.resolve(
         __dirname, "..", "wwwroot", "js", "voice-crypto-worker.js"), "utf8");
     vm.runInContext(source, scope);
+    if (options.readabilityUpdate !== undefined) {
+        self.onmessage({ data: {
+            type: "media-readability", senderId: "sender", contextId: "receiver",
+            readable: options.readabilityUpdate
+        } });
+    }
     const output = [];
     let keyFrameRequests = 0;
     let finish;
@@ -36,7 +42,8 @@ async function transformFrames(operation, frames, mediaKind = "video", options =
     const transformer = {
         options: {
             operation, mediaKind, senderId: "sender", contextId: "receiver",
-            key: Buffer.alloc(32, 7).toString("base64")
+            key: Buffer.alloc(32, 7).toString("base64"),
+            mediaReadable: options.mediaReadable ?? true
         },
         readable: new ReadableStream({
             start(controller) {
@@ -73,6 +80,27 @@ function videoFrame(type, value) {
         ? [0x10, 0, 0, 0x9d, 0x01, 0x2a, 0xa0, 0, 0x78, 0]
         : [0x11, 0x22, 0x33];
     return { type, data: Uint8Array.from([...header, ...new Array(64).fill(value)]) };
+}
+
+for (const kind of ["audio", "video"]) {
+    test(`unreadable ${kind} never reaches the decoder and can be enabled after key confirmation`, async () => {
+        const frames = kind === "video"
+            ? [videoFrame("key", 1)]
+            : [{ type: undefined, data: Uint8Array.from([1, 2, 3, 4]) }];
+        const encrypted = await transformFrames("encrypt", frames, kind, { mediaReadable: false });
+        assert.equal(encrypted.output.length, 1);
+        const unreadable = await transformFrames("decrypt", encrypted.output, kind, { mediaReadable: false });
+        assert.equal(unreadable.output.length, 0);
+        assert.equal(unreadable.keyFrameRequests, 0);
+        const disabled = await transformFrames("decrypt", encrypted.output, kind, {
+            mediaReadable: true, readabilityUpdate: false
+        });
+        assert.equal(disabled.output.length, 0);
+        const confirmed = await transformFrames("decrypt", encrypted.output, kind, {
+            mediaReadable: false, readabilityUpdate: true
+        });
+        assert.deepEqual(confirmed.output, frames);
+    });
 }
 
 test("encrypted video round-trips key and delta frames without altering the wire format", async () => {

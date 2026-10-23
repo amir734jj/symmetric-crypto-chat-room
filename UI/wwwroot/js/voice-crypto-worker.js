@@ -4,9 +4,19 @@ const clearHeaderLengths = {
     audio: 1
 };
 const frameMetadataLength = 9;
+const mediaReadability = new Map();
+
+self.onmessage = event => {
+    if (event.data.type !== "media-readability") return;
+    const { senderId, contextId, readable } = event.data;
+    const id = JSON.stringify([senderId, contextId]);
+    if (readable === null) mediaReadability.delete(id);
+    else mediaReadability.set(id, readable);
+};
 
 self.onrtctransform = event => {
-    const { operation, key, senderId, mediaKind, contextId } = event.transformer.options;
+    const { operation, key, senderId, mediaKind, contextId, mediaReadable = true } = event.transformer.options;
+    const receiverId = JSON.stringify([senderId, contextId]);
     const cryptoKey = importKey(key);
     const counterPrefix = createCounterPrefix(senderId, mediaKind, contextId);
     let frameCounter = operation === "encrypt" ? createInitialFrameCounter() : 0n;
@@ -29,6 +39,7 @@ self.onrtctransform = event => {
     event.transformer.readable
         .pipeThrough(new TransformStream({
             async transform(frame, controller) {
+                if (operation === "decrypt" && !(mediaReadability.get(receiverId) ?? mediaReadable)) return;
                 const input = new Uint8Array(frame.data);
                 let clearHeaderLength = clearHeaderLengths.audio;
                 if (operation === "encrypt" && mediaKind === "video") {

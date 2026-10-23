@@ -21,7 +21,7 @@ async function waitUntil(predicate, message) {
     }
 }
 
-async function createClient(id) {
+async function createClient(id, keyValue = 7) {
     const iframe = document.createElement("iframe");
     iframe.width = 320;
     iframe.height = 220;
@@ -96,7 +96,7 @@ async function createClient(id) {
             else if (method === "SendVoiceIceCandidate") await other.module.receiveIceCandidate(id, data);
         }
     }, client.container, local, { username: `expiry:${id}` },
-    btoa(String.fromCharCode(...new Uint8Array(32).fill(7))), "low", "standard");
+    btoa(String.fromCharCode(...new Uint8Array(32).fill(keyValue))), "low", "standard");
     return client;
 }
 
@@ -242,6 +242,36 @@ window.testResults = (async () => {
         await assertMovingVideo();
         await assertAudio();
         results.textContent += "\nPASS: leaving and rejoining with the opposite offerer restores audio and video";
+        await closeClients();
+        const mismatchedFirst = await createClient("first");
+        const mismatchedSecond = await createClient("second", 8);
+        await mismatchedFirst.module.connectToParticipants([{ connectionId: "second", name: "second" }]);
+        await waitUntil(() => [...clients.values()].every(client =>
+            client.connection?.connectionState === "connected"),
+            "Different-password participants must still establish a WebRTC connection");
+        await mismatchedFirst.module.setVideoEnabled(true);
+        await mismatchedSecond.module.setVideoEnabled(true);
+        await waitUntil(async () => {
+            for (const client of clients.values()) {
+                const reports = await videoStats(client);
+                if (!reports.some(report => report.packetsReceived > 0)) return false;
+            }
+            return true;
+        }, "Different-password participants must exchange encrypted video packets");
+        for (const client of clients.values()) {
+            const status = client.container.querySelector('[role="status"]');
+            check(status && !status.hidden && status.textContent.includes("Unreadable media"),
+                "Each incompatible participant must show an unreadable-media indicator");
+            check(!client.container.querySelector("figure").hidden,
+                "The unreadable indicator must remain visible");
+            check(client.container.querySelector("audio").muted,
+                "Different-password audio must be muted");
+            check(client.container.querySelector("video").hidden,
+                "Different-password video must be hidden");
+            check((await videoStats(client)).every(report => !report.framesDecoded),
+                "Different-password video must be discarded before decoding");
+        }
+        results.textContent += "\nPASS: different-password peers connect but never decode or play incompatible media";
         return { passed: true, details: results.textContent };
     } catch (error) {
         results.textContent += `\nFAIL: ${error.stack}`;

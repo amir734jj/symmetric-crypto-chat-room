@@ -1,4 +1,7 @@
+using System.Security.Cryptography;
+using System.Text;
 using ICSharpCode.SharpZipLib.GZip;
+using Microsoft.JSInterop;
 using Models;
 using Models.Constants;
 
@@ -6,16 +9,20 @@ namespace UI;
 
 public class PayloadEncryptionService(
     SymmetricCryptography symmetricCryptography,
-    ILogger<PayloadEncryptionService> logger)
+    ILogger<PayloadEncryptionService> logger,
+    IJSRuntime jsRuntime)
 {
+    private const string TokenPrefix = "pbkdf2-sha256-v1:";
+    private static readonly byte[] ConfirmationMessage = Encoding.UTF8.GetBytes("symmetric-crypto-chat-room/payload-key/v1");
+
     public async Task<MessagePayload> EncryptPayloadAsync(string password, MessagePayload payload)
     {
         logger.LogTrace("Starting payload encryption process");
 
-        var keyMaterial = HashingUtility.HashString(password);
+        var salt = RandomNumberGenerator.GetBytes(16);
+        var keyMaterial = await DerivePayloadKeyAsync(password, salt);
 
-        // Only set during encryption
-        payload.Token = symmetricCryptography.Encrypt(keyMaterial, Convert.ToBase64String(keyMaterial));
+        payload.Token = $"{TokenPrefix}{Convert.ToBase64String(salt)}:{Convert.ToBase64String(CreateConfirmation(keyMaterial))}";
         payload.Message = symmetricCryptography.Encrypt(keyMaterial, payload.Message);
 
         foreach (var payloadFile in payload.Files)
@@ -35,11 +42,43 @@ public class PayloadEncryptionService(
         return payload;
     }
 
-    public async Task<MessagePayload> DecryptPayloadAsync(string password, MessagePayload payload)
+    public async Task<bool> TryDecryptPayloadAsync(string password, MessagePayload payload)
     {
         logger.LogTrace("Starting payload decryption process");
 
-        var keyMaterial = HashingUtility.HashString(password);
+        byte[] keyMaterial;
+        bool passwordMatches;
+        if (payload.Token?.StartsWith(TokenPrefix, StringComparison.Ordinal) == true)
+        {
+            var parts = payload.Token[TokenPrefix.Length..].Split(':');
+            var salt = new byte[16];
+            var confirmation = new byte[32];
+            if (parts.Length != 2 ||
+                !Convert.TryFromBase64String(parts[0], salt, out var saltLength) || saltLength != salt.Length ||
+                !Convert.TryFromBase64String(parts[1], confirmation, out var confirmationLength) || confirmationLength != confirmation.Length)
+            {
+                logger.LogWarning("Received a payload with an invalid PBKDF2 token");
+                return false;
+            }
+            keyMaterial = await DerivePayloadKeyAsync(password, salt);
+            passwordMatches = CryptographicOperations.FixedTimeEquals(CreateConfirmation(keyMaterial), confirmation);
+        }
+        else
+        {
+            if (payload.Token?.Contains(':') == true)
+            {
+                logger.LogWarning("Received a payload with an unsupported encryption token version");
+                return false;
+            }
+            keyMaterial = HashingUtility.HashString(password);
+            passwordMatches = symmetricCryptography.Encrypt(keyMaterial, Convert.ToBase64String(keyMaterial)) == payload.Token;
+        }
+
+        if (!passwordMatches)
+        {
+            logger.LogDebug("Payload password validation failed; leaving encrypted contents unreadable");
+            return false;
+        }
 
         payload.Message = symmetricCryptography.Decrypt(keyMaterial, payload.Message);
 
@@ -56,14 +95,20 @@ public class PayloadEncryptionService(
         
         logger.LogTrace("Finished payload decryption process");
 
-        return payload;
+        return true;
     }
-    
-    public bool PayloadIsValid(string password, string token)
+
+    private static byte[] CreateConfirmation(byte[] keyMaterial)
     {
-        var keyMaterial = HashingUtility.HashString(password);
-        
-        return symmetricCryptography.Encrypt(keyMaterial, Convert.ToBase64String(keyMaterial)) == token;
+        using var hmac = new HMACSHA256(keyMaterial);
+        return hmac.ComputeHash(ConfirmationMessage);
+    }
+
+    private async Task<byte[]> DerivePayloadKeyAsync(string password, byte[] salt)
+    {
+        await using var module = await jsRuntime.InvokeAsync<IJSObjectReference>(
+            "import", "./js/password-key-derivation.js");
+        return await module.InvokeAsync<byte[]>("derivePayloadKey", password, salt);
     }
 
     private static async Task<byte[]?> TryCompressAsync(byte[] input)

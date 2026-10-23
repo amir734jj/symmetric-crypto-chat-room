@@ -208,8 +208,8 @@ async function createHarness(options = {}) {
             }
         });
         await module.link(specifier => {
-            assert.match(specifier, /^\.\/media-defaults\.js(?:\?v=[\w-]+)?$/);
-            return load(path.resolve(path.dirname(filename), specifier.split("?")[0]));
+            assert.equal(specifier, "./media-defaults.js");
+            return load(path.resolve(path.dirname(filename), specifier));
         });
         await module.evaluate();
         return module;
@@ -280,10 +280,20 @@ test("incoming video prepares the idle sender's encryption before an answer and 
     h.voice.leave();
 });
 
+async function answerPeer(h, connectionId, confirmation) {
+    const offer = JSON.parse(h.callbacks.find(([method, target]) =>
+        method === "SendVoiceOffer" && target === connectionId)[2]);
+    await h.voice.receiveAnswer(connectionId, JSON.stringify({
+        description: { type: "answer", sdp: "test" },
+        mediaKeyConfirmation: confirmation ?? offer.mediaKeyConfirmation
+    }));
+}
+
 test("a replacement remote video track replaces the displayed stream and old track events cannot hide it", async () => {
     const h = await createHarness();
     await h.join(true);
     await h.voice.connectToParticipants([{ connectionId: "remote", name: "Remote" }]);
+    await answerPeer(h, "remote");
     const connection = h.connections[0];
     const previous = connection.addTransceiver("video").receiver;
     const current = connection.addTransceiver("video").receiver;
@@ -513,6 +523,7 @@ test("remote audio connects before and after transcription starts; last departur
     const h = await createHarness();
     await h.join(true);
     await h.voice.connectToParticipants([{ connectionId: "remote-1", name: "First" }]);
+    await answerPeer(h, "remote-1");
     const emitAudio = connection => {
         const receiver = {};
         connection.ontrack({
@@ -532,6 +543,7 @@ test("remote audio connects before and after transcription starts; last departur
     assert.equal(h.contexts[0].sources[1], h.streams[1]);
 
     await h.voice.connectToParticipants([{ connectionId: "remote-2", name: "Second" }]);
+    await answerPeer(h, "remote-2");
     emitAudio(h.connections[1]);
     assert.equal(h.contexts[0].sources.length, 3);
     h.voice.removeParticipant("remote-1");
@@ -822,17 +834,114 @@ test("encryption transform assignment failure detaches the track instead of fall
     h.voice.leave();
 });
 
-test("a mismatched media password is rejected before capturing audio or negotiating a connection", async () => {
+test("a mismatched media offer connects with an unreadable indicator and no playable media", async () => {
     const h = await createHarness();
-    await h.join();
-    await assert.rejects(h.voice.receiveOffer("remote", "Remote", JSON.stringify({
-        description: { type: "offer", sdp: "test" },
+    await h.join(true);
+    await h.voice.receiveOffer("remote", "Remote", JSON.stringify({
+        description: { type: "offer", sdp: "incoming-video" },
         mediaKeyConfirmation: "different-password"
-    })), /different passwords/);
-    assert.equal(h.connections.length, 0);
-    assert.equal(h.streams[0].getAudioTracks().length, 0);
+    }));
+    assert.equal(h.connections.length, 1);
+    assert.equal(h.connections[0].localDescription.type, "answer");
+    const [audio, tile] = h.remoteContainer.children;
+    assert.equal(audio.muted, true);
+    assert.equal(tile.hidden, false);
+    assert.equal(tile.children[0].hidden, true);
+    assert.equal(tile.children[1].hidden, true);
+    assert.equal(tile.children[3].hidden, false);
+    assert.match(tile.children[3].textContent, /Unreadable media/);
+    assert.ok(h.connections[0].getSenders().every(sender => sender.transform.options.operation === "encrypt"));
+    assert.ok(h.connections[0].getTransceivers().every(item =>
+        item.receiver.transform.options.mediaReadable === false));
     assert.ok(h.callbacks.some(([method, , answer]) =>
-        method === "SendVoiceAnswer" && JSON.parse(answer).error === "mediaKeyMismatch"));
+        method === "SendVoiceAnswer" && JSON.parse(answer).description.type === "answer"));
+    h.voice.leave();
+    assert.equal(tile.removed, true);
+    assert.equal(audio.removed, true);
+});
+
+test("mixed-password answers leave matching peers readable and mismatched peers unreadable", async () => {
+    const h = await createHarness();
+    await h.join(true);
+    await h.voice.connectToParticipants([
+        { connectionId: "matching", name: "Matching" },
+        { connectionId: "different", name: "Different" }
+    ]);
+    await answerPeer(h, "matching");
+    await answerPeer(h, "different", "different-password");
+    assert.equal(h.connections[0].remoteDescription.type, "answer");
+    assert.equal(h.connections[1].remoteDescription.type, "answer");
+    assert.equal(h.remoteContainer.children[0].muted, false);
+    assert.equal(h.remoteContainer.children[1].children[3].hidden, true);
+    assert.equal(h.remoteContainer.children[2].muted, true);
+    assert.equal(h.remoteContainer.children[3].children[3].hidden, false);
+    assert.equal(h.remoteContainer.children[3].hidden, false);
+    assert.equal(h.workers[0].messages.filter(message => message.type === "media-readability").at(-1).readable, false);
+    h.voice.leave();
+});
+
+test("unreadable audio is excluded from transcription both before and after transcription starts", async () => {
+    const h = await createHarness();
+    await h.join(true);
+    await h.voice.connectToParticipants([
+        { connectionId: "first", name: "First" },
+        { connectionId: "second", name: "Second" }
+    ]);
+    await answerPeer(h, "first", "different-password");
+    await answerPeer(h, "second", "different-password");
+    const emitAudio = connection => connection.ontrack({
+        receiver: {}, track: { kind: "audio", readyState: "live" }
+    });
+    emitAudio(h.connections[0]);
+    await h.voice.setTranscriptionEnabled(true);
+    assert.equal(h.contexts[0].sources.length, 1);
+    emitAudio(h.connections[1]);
+    assert.equal(h.contexts[0].sources.length, 1);
+    h.voice.leave();
+});
+
+test("renegotiating key confirmation updates readability without removing the participant", async () => {
+    const h = await createHarness();
+    await h.join(true);
+    await h.voice.connectToParticipants([{ connectionId: "remote", name: "Remote" }]);
+    const offer = JSON.parse(h.callbacks.find(([method]) => method === "SendVoiceOffer")[2]);
+    await answerPeer(h, "remote", "different-password");
+    const [audio, tile] = h.remoteContainer.children;
+    assert.equal(tile.children[3].hidden, false);
+    await h.voice.receiveOffer("remote", "Remote", JSON.stringify(offer));
+    assert.equal(audio.muted, false);
+    assert.equal(tile.children[3].hidden, true);
+    assert.equal(tile.hidden, true);
+    offer.mediaKeyConfirmation = "different-password";
+    await h.voice.receiveOffer("remote", "Remote", JSON.stringify(offer));
+    assert.equal(audio.muted, true);
+    assert.equal(tile.children[3].hidden, false);
+    assert.equal(tile.hidden, false);
+    assert.equal(h.connections.length, 1);
+    assert.equal(h.connections[0].closed, undefined);
+    h.voice.leave();
+});
+
+test("a missing media key confirmation allows signaling but never enables playback", async () => {
+    const h = await createHarness();
+    await h.join(true);
+    await h.voice.receiveOffer("remote", "Remote", JSON.stringify({
+        description: { type: "offer", sdp: "test" }
+    }));
+    assert.equal(h.connections[0].localDescription.type, "answer");
+    assert.equal(h.remoteContainer.children[0].muted, true);
+    assert.equal(h.remoteContainer.children[1].children[3].hidden, false);
+    h.voice.leave();
+});
+
+test("invalid session descriptions still fail explicitly without reporting a password mismatch", async () => {
+    const h = await createHarness();
+    await h.join(true);
+    await assert.rejects(h.voice.receiveOffer("remote", "Remote", JSON.stringify({
+        mediaKeyConfirmation: "different-password"
+    })), /invalid session description/);
+    assert.equal(h.connections.length, 0);
+    assert.ok(!h.callbacks.some(([method]) => method === "SendVoiceAnswer"));
     h.voice.leave();
 });
 

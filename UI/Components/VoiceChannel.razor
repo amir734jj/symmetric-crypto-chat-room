@@ -286,7 +286,7 @@
 
     [Parameter] public bool DebugMode { get; set; }
 
-    private const string VoiceModulePath = "./js/voice-chat.js?v=20261022-8";
+    private const string VoiceModulePath = "./js/voice-chat.js";
 
     private static readonly TimeSpan RingTimeout = TimeSpan.FromSeconds(30);
     private readonly HashSet<string> _participantIds = [];
@@ -418,7 +418,7 @@
 
     private async Task ApplyQualityDefaults()
     {
-        await using var defaults = await Js.InvokeAsync<IJSObjectReference>("import", "./js/media-defaults.js?v=20261022-2");
+        await using var defaults = await Js.InvokeAsync<IJSObjectReference>("import", "./js/media-defaults.js");
         var quality = await defaults.InvokeAsync<string>("getDefaultMediaQuality");
         if (!_audioQualitySelected)
         {

@@ -24,7 +24,7 @@ export async function start(reference, model, getStreams) {
 
     try {
         worker = new Worker(
-            new URL("./transcription-worker.js?version=whisper-model-selector-v2", import.meta.url),
+            new URL("./transcription-worker.js", import.meta.url),
             { type: "module" });
         worker.onmessage = event => {
             if (sessionId === startingSession) handleWorkerMessage(event);

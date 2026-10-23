@@ -3,5 +3,6 @@
   <Project Path="Domainlogic/Domainlogic.csproj" />
   <Project Path="Models/Models.csproj" />
   <Project Path="Tests/MessageHub.Tests/MessageHub.Tests.csproj" />
+  <Project Path="Tests/PayloadEncryption.Tests/PayloadEncryption.Tests.csproj" />
   <Project Path="UI/UI.csproj" />
 </Solution>
