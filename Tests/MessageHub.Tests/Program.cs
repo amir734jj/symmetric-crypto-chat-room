@@ -29,16 +29,40 @@ try
     var firstName = users.Single(user => user.ConnectionId == "first").Name;
     var secondName = users.Single(user => user.ConnectionId == "second").Name;
 
+    await first.RingVoice("second");
+    Check((string)recorder.Calls.Last(call => call.Method == "VoiceCallReceived").Args[0]! == "first",
+        "Online users must be able to ring each other before either joins the bridge");
+    await second.RespondVoiceCall("first", true);
+    Check((bool)recorder.Calls.Last(call => call.Method == "VoiceCallResponded").Args[2]!,
+        "An invitation must be accepted without requiring existing bridge membership");
+    await Reject(() => first.SendVoiceOffer("second", "offer"),
+        "Sending a ring must not automatically join the sender to the bridge");
+    Check((await second.JoinVoice()).Count == 0,
+        "Accepting users should join the bridge independently of the unjoined sender");
+    await first.RingVoice("second");
+    await second.RespondVoiceCall("first", true);
+    await Reject(() => first.SendVoiceOffer("second", "offer"),
+        "Ringing an already-joined user must not join the sender to the bridge");
+    await second.RingVoice("first");
+    await first.RespondVoiceCall("second", false);
+    await second.LeaveVoice();
+
     Check((await first.JoinVoice()).Count == 0, "First participant should join alone");
+    await first.RingVoice("second");
+    await second.RespondVoiceCall("first", true);
     var peers = await second.JoinVoice();
     Check(peers.Single().ConnectionId == "first" && peers[0].Name == firstName,
-        "Matching-name participants should see each other in voice");
+        "An unjoined invitee should discover the sender when joining the bridge");
     await first.RingVoice("second");
     Check((string)recorder.Calls.Last(call => call.Method == "VoiceCallReceived").Args[1]! == firstName,
         "Incoming calls should identify the caller's session");
     await second.RespondVoiceCall("first", true);
-    Check((string)recorder.Calls.Last(call => call.Method == "VoiceCallResponded").Args[1]! == secondName,
+    var accepted = recorder.Calls.Last(call => call.Method == "VoiceCallResponded");
+    Check((string)accepted.Args[1]! == secondName && (bool)accepted.Args[2]!,
         "Call responses should identify the responder's session");
+    Check((await first.JoinVoice()).Single().ConnectionId == "second" &&
+        (await second.JoinVoice()).Single().ConnectionId == "first",
+        "Ringing and answering already-connected participants must preserve their call memberships");
     await first.RingVoice("second");
     await Reject(() => first.RingVoice("second"), "An already-pending incoming call must still be rejected");
     await first.CancelVoiceCall("second", true);
@@ -79,6 +103,7 @@ try
     Check(LastPresence().Single().Name == "Amir", "Matching names in a different channel must not add a suffix");
     Check((await first.JoinVoice()).All(peer => peer.ConnectionId != "outsider"),
         "Voice discovery must not include other channels");
+    await Reject(() => first.RingVoice("outsider"), "Cross-channel invitations must remain blocked");
     await Reject(() => first.SendVoiceOffer("outsider", "offer"), "Cross-channel signaling must remain blocked");
     await first.LeaveVoice();
     Check((string)recorder.Calls.Last(call => call.Method == "VoiceParticipantLeft").Args[0]! == "first",

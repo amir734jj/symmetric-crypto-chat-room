@@ -25,9 +25,11 @@
         <div class="voice-channel-actions">
             @if (!_joined)
             {
-                <HxButton Color="ThemeColor.Success" Enabled="@(!_busy)" OnClick="@(() => _incomingCallerConnectionId == null ? Join() : AcceptCall())">
-                    Join call
-                </HxButton>
+                <span data-stop-ringtone>
+                    <HxButton Color="ThemeColor.Success" Enabled="@(!_busy)" OnClick="@(() => _incomingCallerConnectionId == null ? Join() : AcceptCall())">
+                        Join call
+                    </HxButton>
+                </span>
             }
             else
             {
@@ -173,12 +175,9 @@
                     {
                         <span class="text-success">In call</span>
                     }
-                    else
-                    {
-                        <HxButton Size="ButtonSize.Small" Color="ThemeColor.Primary" Enabled="@(!_busy && _outgoingCallConnectionId == null)" OnClick="@(() => Ring(user))">
-                            Ring
-                        </HxButton>
-                    }
+                    <HxButton Size="ButtonSize.Small" Color="ThemeColor.Primary" Enabled="@(!_busy && _outgoingCallConnectionId == null)" OnClick="@(() => Ring(user))">
+                        Ring
+                    </HxButton>
                 </div>
             }
         }
@@ -188,7 +187,7 @@
     {
         <div class="voice-call-alert mt-3" role="alert">
             <strong>@_incomingCallerName is calling</strong>
-            <div>
+            <div data-stop-ringtone>
                 <HxButton Size="ButtonSize.Small" Color="ThemeColor.Success" Enabled="@(!_busy)" OnClick="AcceptCall">
                     Accept
                 </HxButton>
@@ -293,6 +292,8 @@
     private readonly List<string> _transcript = [];
     private DotNetObjectReference<VoiceChannel>? _reference;
     private IJSObjectReference? _module;
+    private Task<IJSObjectReference>? _ringtoneModuleTask;
+    private long _ringtoneRequestId;
     private ElementReference _remoteMediaContainer;
     private ElementReference _localVideo;
     private ElementReference _localVideoTile;
@@ -733,13 +734,6 @@
     private async Task Ring(OnlineUser user)
     {
         _callStatus = null;
-        if (!_joined)
-        {
-            await Join();
-        }
-
-        if (!_joined) return;
-
         try
         {
             _outgoingCallConnectionId = user.ConnectionId;
@@ -836,12 +830,11 @@
     {
         return InvokeAsync(async () =>
         {
-            await StopRingtone();
             _incomingCallerConnectionId = callerConnectionId;
             _incomingCallerName = callerName;
             _callStatus = null;
-            await PlayRingtone();
             StateHasChanged();
+            await PlayRingtone();
         });
     }
 
@@ -911,19 +904,28 @@
 
     private async Task ClearIncomingCall()
     {
-        await StopRingtone();
         _incomingCallerConnectionId = null;
         _incomingCallerName = null;
+        await StopRingtone();
     }
 
     private async Task PlayRingtone()
     {
-        await Js.InvokeVoidAsync("playAudio", _ringtone);
+        var requestId = ++_ringtoneRequestId;
+        var module = await (_ringtoneModuleTask ??= Js.InvokeAsync<IJSObjectReference>(
+            "import", "./js/ringtone.js").AsTask());
+        if (requestId != _ringtoneRequestId || _incomingCallerConnectionId == null) return;
+        await module.InvokeVoidAsync("playRingtone", _ringtone);
     }
 
     private async Task StopRingtone()
     {
-        await Js.InvokeVoidAsync("stopAudio", _ringtone);
+        _ringtoneRequestId++;
+        if (_ringtoneModuleTask?.IsCompletedSuccessfully == true)
+        {
+            var module = await _ringtoneModuleTask;
+            await module.InvokeVoidAsync("stopRingtone");
+        }
     }
 
     private async Task CheckTurnHealth()
@@ -1326,6 +1328,13 @@
         SignalRStateManager.PresenceChanged -= PresenceChanged;
 
         await StopRingtone();
+
+        if (_ringtoneModuleTask != null)
+        {
+            var ringtoneModule = await _ringtoneModuleTask;
+            await ringtoneModule.InvokeVoidAsync("dispose");
+            await ringtoneModule.DisposeAsync();
+        }
 
         if (_joined)
         {
