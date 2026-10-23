@@ -6,6 +6,14 @@ const vm = require("node:vm");
 const { webcrypto } = require("node:crypto");
 const { pathToFileURL } = require("node:url");
 
+test("call health icon stays compact even before the stylesheet loads", async () => {
+    const markup = await readFile(path.join(__dirname, "..", "Components", "VoiceChannel.razor"), "utf8");
+    const icon = markup.match(/<svg\b[^>]*viewBox="0 0 14 12"[^>]*>/)?.[0];
+    assert.ok(icon, "Call health icon must be present");
+    assert.match(icon, /\bwidth="14"/);
+    assert.match(icon, /\bheight="12"/);
+});
+
 async function createHarness(options = {}) {
     const imports = [];
     const workers = [];
