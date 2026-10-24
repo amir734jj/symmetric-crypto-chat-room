@@ -1,7 +1,9 @@
 @using Models
+@using Microsoft.AspNetCore.SignalR
 @inject SignalRStateManager SignalRStateManager
 @inject State State
 @inject IJSRuntime Js
+@inject ILogger<VoiceChannel> Logger
 @implements IAsyncDisposable
 
 <section class="voice-channel mb-3" aria-label="Voice and video channel">
@@ -19,6 +21,14 @@
                     <span class="visually-hidden">@SignalHealthLabel</span>
                 </span>
                 <span class="ms-2 text-muted">@(_participantIds.Count + 1) connected</span>
+                @if (_useHttpsAudio)
+                {
+                    <span class="ms-2 text-muted">Audio over HTTPS (Stealth mode) - @(_opusAudio ? "Native Opus" : "Compatibility G.711")</span>
+                }
+                else
+                {
+                    <span class="ms-2 text-muted">Automatic - WebRTC</span>
+                }
             }
         </div>
 
@@ -50,7 +60,7 @@
                         Choose output
                     </HxButton>
                 }
-                <HxButton Color="ThemeColor.Secondary" OnClick="ToggleMute">
+                <HxButton Color="ThemeColor.Secondary" Enabled="@(!_busy && !_transitioning)" OnClick="ToggleMute">
                     @(_muted ? "Unmute" : "Mute")
                 </HxButton>
                 @if (_screenWakeLockSupported)
@@ -60,9 +70,12 @@
                         <label class="form-check-label" for="keep-screen-on">Keep screen on</label>
                     </div>
                 }
-                <HxButton Color="ThemeColor.Secondary" Enabled="@(!_busy && !_screenSharing)" OnClick="ToggleVideo">
-                    @(_videoEnabled ? "Stop video" : "Start video")
-                </HxButton>
+                @if (!_useHttpsAudio)
+                {
+                    <HxButton Color="ThemeColor.Secondary" Enabled="@(!_busy && !_screenSharing)" OnClick="ToggleVideo">
+                        @(_videoEnabled ? "Stop video" : "Start video")
+                    </HxButton>
+                }
                 @if (_screenSharingSupported || _screenSharing)
                 {
                     <HxButton Color="ThemeColor.Secondary" Enabled="@(!_busy)" OnClick="ToggleScreenSharing">
@@ -82,6 +95,15 @@
         </div>
     </div>
 
+    @if (_joined && !string.IsNullOrWhiteSpace(_transportReason))
+    {
+        <div class="text-muted mt-2" role="status">@_transportReason
+            @if (_useHttpsAudio && !_opusAudio)
+            {
+                <span>Native Opus is not available in every participant's browser; using telephone-quality compatibility audio.</span>
+            }
+        </div>
+    }
     <div class="voice-settings-controls mt-2">
         <HxButton Color="ThemeColor.Secondary" Enabled="@(!_checkingBrowserTurn)" OnClick="TestBrowserRelay">
             @(_checkingBrowserTurn ? "Testing relay..." : "Test TURN/TLS")
@@ -115,9 +137,17 @@
         <section class="voice-settings mt-3" aria-labelledby="voice-settings-title">
             <strong id="voice-settings-title">Advanced call settings</strong>
             <div class="voice-settings-controls mt-2">
+                <div>
+                    <div class="form-check form-switch">
+                        <input id="https-audio-mode" class="form-check-input" type="checkbox" role="switch"
+                               @bind="_forceStealth" disabled="@(_joined || _busy)" />
+                        <label class="form-check-label" for="https-audio-mode">Force Audio over HTTPS (Stealth mode)</label>
+                    </div>
+                    <small class="text-muted">Automatic is the default: try WebRTC, then switch the whole call to encrypted HTTPS audio if media cannot connect. Enable this to skip WebRTC; other participants switch automatically. Stealth is audio-only, without video or transcription, and is not a guaranteed filtering bypass.</small>
+                </div>
                 <label class="voice-quality">
                     <span>Audio quality</span>
-                    <select @key="_effectiveAudioQuality" class="form-select form-select-sm" @bind="_audioQuality" @bind:after="AudioQualityChanged" disabled="@_busy">
+                    <select @key="_effectiveAudioQuality" class="form-select form-select-sm" @bind="_audioQuality" @bind:after="AudioQualityChanged" disabled="@(_busy || _useHttpsAudio || _forceStealth)">
                         <option value="auto">Auto - Current: @AudioQualityLabel(_effectiveAudioQuality)</option>
                         <option value="very-low">Very low</option>
                         <option value="low">Low</option>
@@ -127,7 +157,7 @@
                 </label>
                 <label class="voice-quality">
                     <span>Camera quality</span>
-                    <select @key="_effectiveVideoQuality" class="form-select form-select-sm" @bind="_videoQuality" @bind:after="VideoQualityChanged" disabled="@_busy">
+                    <select @key="_effectiveVideoQuality" class="form-select form-select-sm" @bind="_videoQuality" @bind:after="VideoQualityChanged" disabled="@(_busy || _useHttpsAudio || _forceStealth)">
                         <option value="auto">Auto - Current: @VideoQualityLabel(_effectiveVideoQuality)</option>
                         <option value="very-low">Very low (144p)</option>
                         <option value="low">Low (240p)</option>
@@ -198,6 +228,10 @@
             {
                 <div class="voice-online-user">
                     <span>@user.Name</span>
+                    @if (user.HttpsAudio)
+                    {
+                        <span class="text-muted">Stealth audio</span>
+                    }
                     @if (_participantIds.Contains(user.ConnectionId))
                     {
                         <span class="text-success">In call</span>
@@ -242,12 +276,18 @@
     {
         <div class="text-danger mt-2" role="alert">@_error</div>
     }
+    @if (_unreadableHttpsPeers.Count > 0)
+    {
+        <div class="text-danger mt-2" role="alert">Unreadable Stealth audio - different password or invalid encrypted frames:
+            @string.Join(", ", State.OnlineUsers.Where(user => _unreadableHttpsPeers.Contains(user.ConnectionId)).Select(user => user.Name))
+        </div>
+    }
 
     @if (DebugMode && _showDebug)
     {
         <div class="voice-debug mt-3">
             <div class="voice-debug-header">
-                <strong>ICE connection details</strong>
+                <strong>@(_useHttpsAudio ? "HTTPS audio relay details" : "ICE connection details")</strong>
                 <div>
                     <HxButton Size="ButtonSize.Small" Color="ThemeColor.Secondary" OnClick="RefreshDebug">
                         Refresh
@@ -319,6 +359,23 @@
     private readonly List<string> _transcript = [];
     private DotNetObjectReference<VoiceChannel>? _reference;
     private IJSObjectReference? _module;
+    private IJSObjectReference? _httpsAudioModule;
+    private bool _useHttpsAudio;
+    private bool _forceStealth;
+    private bool _opusAudio;
+    private bool _joiningAutomatic;
+    private bool _transitioning;
+    private bool _fallbackPending;
+    private long _voiceRevision;
+    private long _mediaRevision;
+    private string? _transportReason;
+    private VoiceCapabilities? _voiceCapabilities;
+    private VoiceCallState? _pendingVoiceState;
+    private readonly SemaphoreSlim _voiceTransition = new(1, 1);
+    private bool _webRtcReady;
+    private readonly Queue<(string Kind, string Sender, string Payload)> _pendingWebRtcSignals = [];
+    private readonly HashSet<string> _unreadableHttpsPeers = [];
+    private IJSObjectReference? ActiveAudioModule => _useHttpsAudio ? _httpsAudioModule : _module;
     private IJSObjectReference? _turnDiagnosticsModule;
     private Task<IJSObjectReference>? _ringtoneModuleTask;
     private long _ringtoneRequestId;
@@ -454,6 +511,11 @@
         SignalRStateManager.VoiceCallRespondedEvent += VoiceCallResponded;
         SignalRStateManager.ConnectionReconnected += ConnectionReconnected;
         SignalRStateManager.PresenceChanged += PresenceChanged;
+        SignalRStateManager.HttpsAudioParticipantsChangedEvent += HttpsAudioParticipantsChanged;
+        SignalRStateManager.HttpsAudioReceived += ReceiveHttpsAudio;
+        SignalRStateManager.HttpsAudioFailedEvent += HttpsAudioFailed;
+        SignalRStateManager.VoiceCallChangedEvent += VoiceCallChanged;
+        SignalRStateManager.AutomaticAudioReceived += ReceiveAutomaticAudio;
     }
 
     protected override async Task OnAfterRenderAsync(bool firstRender)
@@ -493,7 +555,7 @@
     {
         return InvokeAsync(async () =>
         {
-            if (_joined && _module != null)
+            if (_joined && !_useHttpsAudio && _module != null)
             {
                 try
                 {
@@ -523,17 +585,45 @@
     private async Task Join()
     {
         _busy = true;
+        _joiningAutomatic = true;
         _error = null;
 
         try
         {
             await EnsureQualityDefaults();
-            _module ??= await Js.InvokeAsync<IJSObjectReference>("import", VoiceModulePath);
             _reference ??= DotNetObjectReference.Create(this);
 
+            _httpsAudioModule ??= await Js.InvokeAsync<IJSObjectReference>("import", "./js/https-audio.js");
+            _voiceCapabilities = await _httpsAudioModule.InvokeAsync<VoiceCapabilities>("getCapabilities");
+            _voiceCapabilities.ForceStealth = _forceStealth;
+            var state = await SignalRStateManager.JoinAutomaticVoice(_voiceCapabilities);
+            if (_disposed) { await SignalRStateManager.LeaveVoice(); return; }
+            _joined = true;
+            StartCallTimer();
+            QueueVoiceState(state);
+            await ApplyQueuedVoiceStates();
+        }
+        catch (Exception exception)
+        {
+            _error = $"Unable to join voice: {exception.Message}";
+            Logger.LogWarning(exception, "Unable to join automatic voice");
+            try
+            {
+                if (_joined) await SignalRStateManager.LeaveVoice();
+            }
+            finally { await CleanupBrowserVoice(); }
+        }
+        finally
+        {
+            _joiningAutomatic = false;
+            _busy = false;
+        }
+    }
+
+    private async Task<IJSObjectReference> InitializeWebRtc(string voiceKey)
+    {
+            _module ??= await Js.InvokeAsync<IJSObjectReference>("import", VoiceModulePath);
             var turnCredentials = await SignalRStateManager.GetTurnCredentials();
-            var userInfo = State.UserInfo ?? throw new InvalidOperationException("Chat session is not available");
-            var voiceKey = Convert.ToBase64String(HashingUtility.DeriveVoiceKey(userInfo.Password, userInfo.Channel));
             await _module.InvokeVoidAsync(
                 "initialize",
                 _reference,
@@ -542,7 +632,8 @@
                 turnCredentials,
                 voiceKey,
                 _audioQuality,
-                _videoQuality);
+                _videoQuality,
+                true);
             _audioOutputSelectionSupported = await _module.InvokeAsync<bool>("supportsAudioOutputSelection");
             _usesAudioSessionOutputModes = await _module.InvokeAsync<bool>("usesAudioSessionOutputModes");
             _screenWakeLockSupported = await _module.InvokeAsync<bool>("supportsMobileScreenWakeLock");
@@ -570,38 +661,147 @@
             {
                 _liveTranscriptionSupported = false;
             }
+            return _module;
+    }
 
-            var participants = await SignalRStateManager.JoinVoice();
-            _joined = true;
-            StartCallTimer();
-            _participantIds.UnionWith(participants.Select(participant => participant.ConnectionId));
-            await _module.InvokeVoidAsync(
-                "connectToParticipants",
-                (object)participants.Select(participant => new
-                {
-                    participant.ConnectionId,
-                    participant.Name
-                }).ToArray());
-        }
-        catch (Exception exception)
+    private void QueueVoiceState(VoiceCallState state)
+    {
+        if (state.Revision > _voiceRevision && (_pendingVoiceState == null || state.Revision > _pendingVoiceState.Revision))
+            _pendingVoiceState = state;
+    }
+
+    private async Task ApplyQueuedVoiceStates()
+    {
+        while (_pendingVoiceState is { } state && _joined && !_disposed)
         {
-            _error = $"Unable to join voice: {exception.Message}";
-            if (_joined)
+            _pendingVoiceState = null;
+            await ApplyVoiceState(state);
+        }
+    }
+
+    private async Task ApplyVoiceState(VoiceCallState state)
+    {
+        await _voiceTransition.WaitAsync();
+        var wasBusy = _busy;
+        try
+        {
+            if (!_joined || _disposed || state.Revision <= _voiceRevision) return;
+            _voiceRevision = state.Revision;
+            _participantIds.Clear();
+            _participantIds.UnionWith(state.Participants.Select(peer => peer.ConnectionId));
+            _unreadableHttpsPeers.IntersectWith(_participantIds);
+            _transportReason = state.Reason;
+            if (_mediaRevision == state.MediaRevision)
             {
-                await SignalRStateManager.LeaveVoice();
+                if (_useHttpsAudio && _httpsAudioModule != null)
+                    await _httpsAudioModule.InvokeVoidAsync("setParticipants", state.Participants);
+                return;
             }
-            await CleanupBrowserVoice();
+            _transitioning = true;
+            _busy = true;
+            _webRtcReady = false;
+            if (_module != null) await _module.InvokeVoidAsync("leave");
+            if (_httpsAudioModule != null) await _httpsAudioModule.InvokeVoidAsync("leave");
+            _useHttpsAudio = state.HttpsAudio;
+            _opusAudio = state.Opus;
+            _mediaRevision = state.MediaRevision;
+            _unreadableHttpsPeers.Clear();
+            _videoEnabled = _screenSharing = _transcriptionEnabled = false;
+            _screenSharingSupported = _liveTranscriptionSupported = false;
+            _audioOutputSelectionSupported = _usesAudioSessionOutputModes = _screenWakeLockSupported = false;
+            _connectionHealth = "waiting";
+            _connectionHealthDetail = "Negotiating encrypted call transport";
+            _debugInfo = null;
+            _sendMbps = _receiveMbps = 0;
+            var user = State.UserInfo ?? throw new InvalidOperationException("Chat session is not available");
+            var key = Convert.ToBase64String(HashingUtility.DeriveVoiceKey(user.Password, user.Channel));
+            if (_useHttpsAudio)
+            {
+                _pendingWebRtcSignals.Clear();
+                var module = _httpsAudioModule ?? throw new InvalidOperationException("HTTPS audio module is unavailable");
+                await module.InvokeVoidAsync("initialize", _reference, key, _opusAudio, _muted, _mediaRevision);
+                if (!_joined || _disposed) { await module.InvokeVoidAsync("leave"); return; }
+                await module.InvokeVoidAsync("setParticipants", state.Participants);
+            }
+            else
+            {
+                IJSObjectReference module;
+                try
+                {
+                    module = await InitializeWebRtc(key);
+                }
+                catch (HubException exception) when (_voiceCapabilities?.SupportsHttpsAudio == true)
+                {
+                    Logger.LogWarning(exception, "WebRTC relay configuration unavailable; negotiating HTTPS audio");
+                    QueueVoiceState(await SignalRStateManager.RequestHttpsAudio(_mediaRevision));
+                    return;
+                }
+                if (!_joined || _disposed) { await module.InvokeVoidAsync("leave"); return; }
+                await module.InvokeVoidAsync("setMuted", _muted);
+                _webRtcReady = true;
+                while (_pendingWebRtcSignals.TryDequeue(out var signal) && _joined && !_useHttpsAudio)
+                {
+                    if (signal.Kind == "offer") await ReceiveVoiceOffer(signal.Sender, signal.Payload);
+                    else if (signal.Kind == "answer") await ReceiveVoiceAnswer(signal.Sender, signal.Payload);
+                    else await ReceiveVoiceIceCandidate(signal.Sender, signal.Payload);
+                }
+                await module.InvokeVoidAsync("connectToParticipants", state.Participants);
+            }
         }
         finally
         {
-            _busy = false;
+            _transitioning = false;
+            _busy = wasBusy;
+            _voiceTransition.Release();
+            StateHasChanged();
         }
+    }
+
+    private Task VoiceCallChanged(VoiceCallState state) => InvokeAsync(async () =>
+    {
+        if (_disposed || (!_joined && !_joiningAutomatic)) return;
+        QueueVoiceState(state);
+        if (_joiningAutomatic) return;
+        try { await ApplyQueuedVoiceStates(); }
+        catch (Exception exception)
+        {
+            Logger.LogWarning(exception, "Unable to apply negotiated voice transport");
+            await HttpsAudioFailed($"Unable to switch call transport: {exception.Message}");
+        }
+    });
+
+    [JSInvokable]
+    public Task WebRtcMediaFailed(string reason) => InvokeAsync(async () =>
+    {
+        if (!_joined || _useHttpsAudio || _fallbackPending || _disposed) return;
+        _fallbackPending = true;
+        try
+        {
+            Logger.LogInformation("Negotiating HTTPS audio: {Reason}", reason);
+            QueueVoiceState(await SignalRStateManager.RequestHttpsAudio(_mediaRevision));
+            await ApplyQueuedVoiceStates();
+        }
+        catch (Exception exception)
+        {
+            _error = $"Unable to negotiate Stealth audio: {exception.Message}";
+            Logger.LogWarning(exception, "Automatic audio fallback failed");
+        }
+        finally { _fallbackPending = false; StateHasChanged(); }
+    });
+
+    private Task ReceiveAutomaticAudio(long mediaRevision, string connectionId, byte[] frame)
+    {
+        return InvokeAsync(async () =>
+        {
+            if (_transitioning || mediaRevision != _mediaRevision) return;
+            await ReceiveHttpsAudio(connectionId, frame);
+        });
     }
 
     private async Task ToggleMute()
     {
         _muted = !_muted;
-        await _module!.InvokeVoidAsync("setMuted", _muted);
+        await ActiveAudioModule!.InvokeVoidAsync("setMuted", _muted);
     }
 
     private async Task KeepScreenOnChanged()
@@ -1050,10 +1250,11 @@
 
     private async Task RefreshDebug()
     {
-        if (_module == null) return;
+        var module = ActiveAudioModule;
+        if (module == null) return;
 
         var requestVersion = ++_debugRequestVersion;
-        var debugInfo = await _module.InvokeAsync<string>("getConnectionDiagnostics");
+        var debugInfo = await module.InvokeAsync<string>("getConnectionDiagnostics");
         if (_showDebug && requestVersion == _debugRequestVersion)
         {
             _debugInfo = debugInfo;
@@ -1070,15 +1271,30 @@
 
     private async Task Leave()
     {
-        await SignalRStateManager.LeaveVoice();
-        await CleanupBrowserVoice();
+        try { await SignalRStateManager.LeaveVoice(); }
+        finally { await CleanupBrowserVoice(); }
+    }
+
+    private bool QueueWebRtcSignal(string kind, string sender, string payload)
+    {
+        if (_webRtcReady || _useHttpsAudio || (!_joined && !_joiningAutomatic)) return false;
+        if (_pendingWebRtcSignals.Count >= 64)
+        {
+            _error = "Too many pending WebRTC signals; leave and rejoin the call.";
+            Logger.LogWarning("Rejected excessive pending WebRTC signals");
+            StateHasChanged();
+            return true;
+        }
+        _pendingWebRtcSignals.Enqueue((kind, sender, payload));
+        return true;
     }
 
     private Task ReceiveVoiceOffer(string senderConnectionId, string offer)
     {
         return InvokeAsync(async () =>
         {
-            if (!_joined || _module == null) return;
+            if (QueueWebRtcSignal("offer", senderConnectionId, offer)) return;
+            if (!_joined || _useHttpsAudio || _module == null) return;
             _participantIds.Add(senderConnectionId);
             var senderName = State.OnlineUsers
                 .FirstOrDefault(user => user.ConnectionId == senderConnectionId)?.Name
@@ -1102,7 +1318,8 @@
     {
         return InvokeAsync(async () =>
         {
-            if (_module != null)
+            if (QueueWebRtcSignal("answer", senderConnectionId, answer)) return;
+            if (!_useHttpsAudio && _module != null)
             {
                 try
                 {
@@ -1124,7 +1341,8 @@
     {
         return InvokeAsync(async () =>
         {
-            if (_module != null)
+            if (QueueWebRtcSignal("ice", senderConnectionId, candidate)) return;
+            if (!_useHttpsAudio && _module != null)
             {
                 await _module.InvokeVoidAsync("receiveIceCandidate", senderConnectionId, candidate);
             }
@@ -1136,7 +1354,8 @@
         return InvokeAsync(async () =>
         {
             _participantIds.Remove(connectionId);
-            if (_module != null)
+            _unreadableHttpsPeers.Remove(connectionId);
+            if (!_useHttpsAudio && _module != null)
             {
                 await _module.InvokeVoidAsync("removeParticipant", connectionId);
             }
@@ -1148,6 +1367,83 @@
     public Task SendVoiceOffer(string targetConnectionId, string offer)
     {
         return SignalRStateManager.SendVoiceOffer(targetConnectionId, offer);
+    }
+
+    [JSInvokable]
+    public Task SendHttpsAudio(byte[] frame, long mediaRevision)
+    {
+        if (!_joined || !_useHttpsAudio || _transitioning || mediaRevision != _mediaRevision)
+        {
+            Logger.LogDebug("Discarded an obsolete browser audio frame");
+            return Task.CompletedTask;
+        }
+        return SignalRStateManager.SendAutomaticAudio(mediaRevision, frame);
+    }
+
+    private Task HttpsAudioParticipantsChanged(List<VoiceParticipant> participants)
+    {
+        return InvokeAsync(async () =>
+        {
+            if (!_joined || !_useHttpsAudio || _httpsAudioModule == null) return;
+            _participantIds.Clear();
+            _participantIds.UnionWith(participants.Select(peer => peer.ConnectionId));
+            _unreadableHttpsPeers.IntersectWith(_participantIds);
+            try
+            {
+                await _httpsAudioModule.InvokeVoidAsync("setParticipants", participants);
+            }
+            catch (JSException exception)
+            {
+                await HttpsAudioFailed($"Unable to capture Stealth audio: {exception.Message}");
+            }
+            StateHasChanged();
+        });
+    }
+
+    private Task ReceiveHttpsAudio(string connectionId, byte[] frame)
+    {
+        return InvokeAsync(async () =>
+        {
+            if (!_joined || !_useHttpsAudio || _httpsAudioModule == null) return;
+            try
+            {
+                await _httpsAudioModule.InvokeVoidAsync("receiveAudio", connectionId, frame);
+            }
+            catch (JSException exception)
+            {
+                await HttpsAudioFailed($"Unable to play Stealth audio: {exception.Message}");
+            }
+        });
+    }
+
+    [JSInvokable]
+    public Task HttpsAudioFailed(string message)
+    {
+        return InvokeAsync(async () =>
+        {
+            if (!_joined) return;
+            _error = $"Stealth audio: {message}";
+            try
+            {
+                if (_joined) await SignalRStateManager.LeaveVoice();
+            }
+            finally
+            {
+                await CleanupBrowserVoice();
+                StateHasChanged();
+            }
+        });
+    }
+
+    [JSInvokable]
+    public Task HttpsAudioUnreadable(string connectionId, bool unreadable)
+    {
+        return InvokeAsync(() =>
+        {
+            if (unreadable) _unreadableHttpsPeers.Add(connectionId);
+            else _unreadableHttpsPeers.Remove(connectionId);
+            StateHasChanged();
+        });
     }
 
     [JSInvokable]
@@ -1319,11 +1615,12 @@
             while (await timer.WaitForNextTickAsync(cancellationToken))
             {
                 double[]? dataRates = null;
-                if (_joined && _showDebug && _module != null)
+                var module = ActiveAudioModule;
+                if (_joined && _showDebug && module != null)
                 {
                     try
                     {
-                        dataRates = await _module.InvokeAsync<double[]?>(
+                        dataRates = await module.InvokeAsync<double[]?>(
                             "getLiveDataRateMbps",
                             cancellationToken);
                     }
@@ -1374,13 +1671,25 @@
 
     private async Task CleanupBrowserVoice(bool preserveCallDuration = false)
     {
+        _voiceRevision = 0;
+        _mediaRevision = 0;
+        _pendingVoiceState = null;
+        _webRtcReady = false;
+        _pendingWebRtcSignals.Clear();
+        if (_httpsAudioModule != null)
+        {
+            await _httpsAudioModule.InvokeVoidAsync("leave");
+        }
         if (_module != null)
         {
             await _module.InvokeVoidAsync("leave");
         }
 
         _participantIds.Clear();
+        _unreadableHttpsPeers.Clear();
         _joined = false;
+        _useHttpsAudio = false;
+        _transportReason = null;
         _connectionHealth = "waiting";
         _connectionHealthDetail = "Waiting for another participant";
         _muted = false;
@@ -1426,6 +1735,11 @@
         SignalRStateManager.VoiceCallRespondedEvent -= VoiceCallResponded;
         SignalRStateManager.ConnectionReconnected -= ConnectionReconnected;
         SignalRStateManager.PresenceChanged -= PresenceChanged;
+        SignalRStateManager.HttpsAudioParticipantsChangedEvent -= HttpsAudioParticipantsChanged;
+        SignalRStateManager.HttpsAudioReceived -= ReceiveHttpsAudio;
+        SignalRStateManager.HttpsAudioFailedEvent -= HttpsAudioFailed;
+        SignalRStateManager.VoiceCallChangedEvent -= VoiceCallChanged;
+        SignalRStateManager.AutomaticAudioReceived -= ReceiveAutomaticAudio;
 
         await StopRingtone();
 
@@ -1436,16 +1750,25 @@
             await ringtoneModule.DisposeAsync();
         }
 
-        if (_joined)
+        try
         {
-            await SignalRStateManager.LeaveVoice();
+            if (_joined && State.UserInfo != null)
+            {
+                await SignalRStateManager.LeaveVoice();
+            }
         }
-
-        await CleanupBrowserVoice();
-        if (_module != null)
+        finally
         {
-            await _module.DisposeAsync();
+            await CleanupBrowserVoice();
+            if (_module != null)
+            {
+                await _module.DisposeAsync();
+            }
+            if (_httpsAudioModule != null)
+            {
+                await _httpsAudioModule.DisposeAsync();
+            }
+            _reference?.Dispose();
         }
-        _reference?.Dispose();
     }
 }

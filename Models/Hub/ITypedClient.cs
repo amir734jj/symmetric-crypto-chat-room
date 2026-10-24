@@ -22,5 +22,15 @@ namespace Models.Hub
         public Task ReceiveVoiceAnswer(string senderConnectionId, string answer);
 
         public Task ReceiveVoiceIceCandidate(string senderConnectionId, string candidate);
+
+        public Task HttpsAudioParticipantsChanged(List<VoiceParticipant> participants);
+
+        public Task ReceiveHttpsAudio(string senderConnectionId, byte[] frame);
+
+        public Task HttpsAudioFailed(string message);
+
+        public Task VoiceCallChanged(VoiceCallState state);
+
+        public Task ReceiveAutomaticAudio(long mediaRevision, string senderConnectionId, byte[] frame);
     }
 }

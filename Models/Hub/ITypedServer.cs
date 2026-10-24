@@ -17,6 +17,16 @@ namespace Models.Hub
 
         Task<List<VoiceParticipant>> JoinVoice();
 
+        Task<List<VoiceParticipant>> JoinHttpsAudioVoice();
+
+        Task SendHttpsAudio(byte[] frame);
+
+        Task<VoiceCallState> JoinAutomaticVoice(VoiceCapabilities capabilities);
+
+        Task<VoiceCallState> RequestHttpsAudio(long mediaRevision);
+
+        Task SendAutomaticAudio(long mediaRevision, byte[] frame);
+
         Task<TurnCredentials> GetTurnCredentials();
 
         Task<TurnHealthStatus> CheckTurnHealth();

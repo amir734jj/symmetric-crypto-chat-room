@@ -53,7 +53,7 @@ async function createHarness(options = {}) {
         removeEventListener(name) { documentListeners.delete(name); }
     };
     const scope = vm.createContext({
-        URL, console: options.console ?? console, TextEncoder, atob, btoa, crypto: webcrypto,
+        URL, console: options.console ?? console, TextEncoder, atob, btoa, crypto: webcrypto, Date: options.Date ?? Date,
         setInterval(callback) { adaptQuality = callback; return 1; },
         clearInterval() {},
         document: documentState,
@@ -222,7 +222,7 @@ async function createHarness(options = {}) {
         await voice.initialize(
             reference, remoteContainer, createElement(),
             { username: "expiry:local", host: "localhost", credential: "test-credential", ...options.turnCredentials },
-            Buffer.alloc(32, 1).toString("base64"), quality, quality);
+            Buffer.alloc(32, 1).toString("base64"), quality, quality, options.automaticFallback ?? false);
         if (withAudio) {
             streams[0].addTrack({
                 kind: "audio",
@@ -349,6 +349,61 @@ async function answerPeer(h, connectionId, confirmation) {
         mediaKeyConfirmation: confirmation ?? offer.mediaKeyConfirmation
     }));
 }
+
+test("Automatic WebRTC requests fallback once on failure; legacy callers remain unchanged", async () => {
+    for (const automaticFallback of [false, true]) {
+        const h = await createHarness({ automaticFallback });
+        await h.join(true);
+        await h.voice.connectToParticipants([{ connectionId: "peer", name: "Peer" }]);
+        const peer = h.connections[0];
+        peer.connectionState = "failed";
+        peer.onconnectionstatechange();
+        peer.onconnectionstatechange();
+        assert.equal(h.callbacks.filter(([method]) => method === "WebRtcMediaFailed").length,
+            automaticFallback ? 1 : 0);
+        h.voice.leave();
+        assert.equal(peer.onconnectionstatechange, null);
+    }
+});
+
+test("Automatic WebRTC gives ICE 20 seconds and does not time out departed peers", async () => {
+    let now = 0;
+    const h = await createHarness({
+        automaticFallback: true, Date: class extends Date { static now() { return now; } }
+    });
+    await h.join(true);
+    await h.voice.connectToParticipants([{ connectionId: "peer", name: "Peer" }]);
+    h.connections[0].connectionState = "connecting";
+    now = 19999;
+    await h.adaptQuality();
+    assert.equal(h.callbacks.filter(([method]) => method === "WebRtcMediaFailed").length, 0);
+    now = 20000;
+    await h.adaptQuality();
+    assert.equal(h.callbacks.filter(([method]) => method === "WebRtcMediaFailed").length, 1);
+    h.voice.leave();
+    await h.adaptQuality();
+    assert.equal(h.callbacks.filter(([method]) => method === "WebRtcMediaFailed").length, 1);
+});
+
+test("Automatic media timeout checks RTP packets, not speech, and never treats wrong passwords as filtering", async () => {
+    for (const scenario of ["no-packets", "packets", "wrong-password"]) {
+        let now = 0;
+        const h = await createHarness({
+            automaticFallback: true, Date: class extends Date { static now() { return now; } }
+        });
+        await h.join(true);
+        await h.voice.connectToParticipants([{ connectionId: "peer", name: "Peer" }]);
+        await answerPeer(h, "peer", scenario === "wrong-password" ? "wrong" : undefined);
+        if (scenario === "packets") h.connections[0].stats.set("audio", {
+            id: "audio", type: "inbound-rtp", kind: "audio", packetsReceived: 1, packetsLost: 0
+        });
+        now = 20000;
+        await h.adaptQuality();
+        assert.equal(h.callbacks.filter(([method]) => method === "WebRtcMediaFailed").length,
+            scenario === "no-packets" ? 1 : 0);
+        h.voice.leave();
+    }
+});
 
 test("a replacement remote video track replaces the displayed stream and old track events cannot hide it", async () => {
     const h = await createHarness();

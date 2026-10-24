@@ -29,6 +29,8 @@ let goodVideoNetworkSamples = 0;
 let poorVideoNetworkSamples = 0;
 let adaptationInProgress = false;
 let lastConnectionHealth;
+let automaticFallback = false;
+let fallbackRequested = false;
 let screenWakeLock;
 let wakeLockRequestId = 0;
 let keepScreenOn = false;
@@ -61,12 +63,15 @@ export async function initialize(
     turnCredentials,
     passwordDerivedKey,
     selectedAudioQuality,
-    selectedVideoQuality) {
+    selectedVideoQuality,
+    enableAutomaticFallback = false) {
     if (typeof window.RTCRtpScriptTransform !== "function") {
         throw new Error("This browser does not support password-encrypted WebRTC audio");
     }
 
     dotNetReference = reference;
+    automaticFallback = enableAutomaticFallback;
+    fallbackRequested = false;
     lastConnectionHealth = undefined;
     remoteMediaContainer = container;
     localVideoElement = localVideo;
@@ -898,6 +903,8 @@ export function removeParticipant(connectionId) {
 }
 
 export function leave() {
+    automaticFallback = false;
+    fallbackRequested = false;
     setFocusedVideoTile(undefined);
     stopTranscription();
     clearInterval(adaptationTimer);
@@ -1113,6 +1120,8 @@ async function createPeer(connectionId, participantName) {
         ignoreOffer: false,
         goodVideoBandwidthSamples: 0,
         healthPacketSamples: new Map(),
+        createdAt: Date.now(),
+        hasReceivedAudio: false,
         polite: localConnectionId.localeCompare(connectionId) > 0
     };
     peers.set(connectionId, peer);
@@ -1120,6 +1129,7 @@ async function createPeer(connectionId, participantName) {
         peer.connectionHealth = undefined;
         peer.healthPacketSamples.clear();
         notifyConnectionHealth();
+        if (connection.connectionState === "failed") requestHttpsFallback("WebRTC connection failed");
     };
     notifyConnectionHealth();
     const audioSenders = [];
@@ -1425,6 +1435,11 @@ async function adaptMediaQuality() {
 
     adaptationInProgress = true;
     try {
+        for (const peer of peers.values()) {
+            if (Date.now() - peer.createdAt >= 20000 && peer.connection.connectionState !== "connected") {
+                requestHttpsFallback("WebRTC could not establish media within 20 seconds");
+            }
+        }
         const samples = await Promise.all([...peers.values()].map(getNetworkSample));
         notifyConnectionHealth();
         const usableSamples = samples.filter(sample => sample !== null);
@@ -1533,6 +1548,8 @@ async function getNetworkSample(peer) {
     let remoteInboundVideo;
 
     stats.forEach(report => {
+        if (report.type === "inbound-rtp" && (report.kind === "audio" || report.mediaType === "audio") &&
+            report.packetsReceived > 0) peer.hasReceivedAudio = true;
         if (report.type === "candidate-pair" && report.state === "succeeded" && report.nominated) {
             selectedPair = report;
         } else if (report.type === "remote-inbound-rtp" && (report.kind === "audio" || report.mediaType === "audio")) {
@@ -1541,6 +1558,9 @@ async function getNetworkSample(peer) {
             remoteInboundVideo = report;
         }
     });
+    if (peer.mediaReadable && !peer.hasReceivedAudio && Date.now() - peer.createdAt >= 20000) {
+        requestHttpsFallback("WebRTC connected but no audio packets arrived");
+    }
 
     const sample = {
         roundTripTime: remoteInboundAudio?.roundTripTime ?? remoteInboundVideo?.roundTripTime ?? selectedPair?.currentRoundTripTime,
@@ -1552,6 +1572,13 @@ async function getNetworkSample(peer) {
     return Object.values(sample).some(value => value !== undefined)
         ? { ...sample, peer }
         : null;
+}
+
+function requestHttpsFallback(reason) {
+    if (!automaticFallback || fallbackRequested || !dotNetReference) return;
+    fallbackRequested = true;
+    dotNetReference.invokeMethodAsync("WebRtcMediaFailed", reason)
+        .catch(error => console.error("Unable to negotiate HTTPS audio fallback", error));
 }
 
 function measureConnectionHealth(peer, stats) {

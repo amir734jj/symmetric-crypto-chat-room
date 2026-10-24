@@ -8,6 +8,7 @@ using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.AspNetCore.SignalR;
+using Microsoft.Extensions.Logging;
 using Models;
 using Models.Hub;
 
@@ -19,6 +20,8 @@ namespace DomainLogic
 
         private readonly TurnHealthChecker _turnHealthChecker;
 
+        private readonly ILogger<MessageHub> _logger;
+
         private static readonly ConcurrentDictionary<string, (string Channel, string Name, string ClientInstanceId, long JoinedOrder)> Users = new();
 
         private static readonly ConcurrentDictionary<string, string> ClientConnections = new();
@@ -27,12 +30,20 @@ namespace DomainLogic
 
         private static readonly ConcurrentDictionary<string, byte> VoiceUsers = new();
 
+        private static readonly ConcurrentDictionary<string, (long Window, int Count)> AudioRates = new();
+
+        private static readonly object VoiceGate = new();
+        private static readonly ConcurrentDictionary<string, VoiceCapabilities> AutomaticVoiceUsers = new();
+        private static readonly Dictionary<string, VoiceCallState> AutomaticCalls = new();
+        private static long _voiceRevision;
+
         private static readonly ConcurrentDictionary<string, string> PendingVoiceCalls = new();
 
-        public MessageHub(PlaybackLogic playbackLogic, TurnHealthChecker turnHealthChecker)
+        public MessageHub(PlaybackLogic playbackLogic, TurnHealthChecker turnHealthChecker, ILogger<MessageHub> logger)
         {
             _playbackLogic = playbackLogic;
             _turnHealthChecker = turnHealthChecker;
+            _logger = logger;
         }
         
         public override Task OnConnectedAsync()
@@ -151,10 +162,13 @@ namespace DomainLogic
                 }
             }
 
-            if (VoiceUsers.TryRemove(connectionId, out _))
+            AudioRates.TryRemove(connectionId, out _);
+            if (VoiceUsers.TryRemove(connectionId, out var transport))
             {
                 await Clients.Group(userInfo.Channel).VoiceParticipantLeft(connectionId);
+                if (transport == 1) await NotifyHttpsAudioParticipants(userInfo.Channel);
             }
+            await RemoveAutomaticVoice(connectionId, userInfo.Channel);
 
             await Groups.RemoveFromGroupAsync(connectionId, userInfo.Channel);
             await NotifyAll(userInfo.Channel, MessageTypeEnum.Left);
@@ -163,20 +177,219 @@ namespace DomainLogic
         public Task<List<VoiceParticipant>> JoinVoice()
         {
             var userInfo = GetCurrentUser();
-            VoiceUsers.TryAdd(Context.ConnectionId, 0);
+            JoinVoiceTransport(0);
+            return Task.FromResult(GetVoiceParticipants(userInfo.Channel, Context.ConnectionId, 0));
+        }
 
-            var participants = VoiceUsers.Keys
-                .Where(connectionId => connectionId != Context.ConnectionId)
-                .Where(connectionId => Users.TryGetValue(connectionId, out var peer) &&
-                    peer.Channel == userInfo.Channel)
-                .Select(connectionId => new VoiceParticipant
-                {
-                    ConnectionId = connectionId,
-                    Name = GetDisplayName(Users[connectionId])
-                })
+        public async Task<List<VoiceParticipant>> JoinHttpsAudioVoice()
+        {
+            var userInfo = GetCurrentUser();
+            JoinVoiceTransport(1);
+            await NotifyHttpsAudioParticipants(userInfo.Channel);
+            await NotifyAll(userInfo.Channel, MessageTypeEnum.Joined);
+            return GetVoiceParticipants(userInfo.Channel, Context.ConnectionId, 1);
+        }
+
+        private void JoinVoiceTransport(byte transport)
+        {
+            VoiceUsers.TryAdd(Context.ConnectionId, transport);
+            if (!VoiceUsers.TryGetValue(Context.ConnectionId, out var current) || current != transport)
+            {
+                throw new HubException("Leave the call before changing audio transport");
+            }
+        }
+
+        private static List<VoiceParticipant> GetVoiceParticipants(string channel, string currentId, byte transport)
+        {
+            return VoiceUsers
+                .Where(pair => pair.Value == transport && pair.Key != currentId &&
+                    AutomaticVoiceUsers.ContainsKey(pair.Key) == AutomaticVoiceUsers.ContainsKey(currentId))
+                .Select(pair => Users.TryGetValue(pair.Key, out var user) && user.Channel == channel
+                    ? new VoiceParticipant { ConnectionId = pair.Key, Name = GetDisplayName(user) }
+                    : null)
+                .Where(peer => peer != null)
                 .ToList();
+        }
 
-            return Task.FromResult(participants);
+        private async Task NotifyHttpsAudioParticipants(string channel)
+        {
+            foreach (var peer in GetVoiceParticipants(channel, string.Empty, 1))
+            {
+                await Clients.Client(peer.ConnectionId).HttpsAudioParticipantsChanged(
+                    GetVoiceParticipants(channel, peer.ConnectionId, 1));
+            }
+        }
+
+        public async Task SendHttpsAudio(byte[] frame)
+        {
+            var user = GetCurrentUser();
+            if (!VoiceUsers.TryGetValue(Context.ConnectionId, out var transport) || transport != 1)
+            {
+                throw new HubException("Join Stealth audio before sending audio frames");
+            }
+
+            var window = Environment.TickCount64 / 1000;
+            var rate = AudioRates.AddOrUpdate(Context.ConnectionId, (window, 1),
+                (_, previous) => previous.Window == window ? (window, previous.Count + 1) : (window, 1));
+            if (frame == null || frame.Length != HttpsAudioProtocol.FrameSize || frame[0] != 1 ||
+                rate.Count > HttpsAudioProtocol.MaximumFramesPerSecond)
+            {
+                _logger.LogWarning("Rejected invalid or excessive HTTPS audio from {ConnectionId}", Context.ConnectionId);
+                await LeaveVoice();
+                await Clients.Caller.HttpsAudioFailed("HTTPS audio stopped: invalid frame or excessive send rate.");
+                return;
+            }
+
+            foreach (var peer in GetVoiceParticipants(user.Channel, Context.ConnectionId, 1))
+            {
+                await Clients.Client(peer.ConnectionId).ReceiveHttpsAudio(Context.ConnectionId, frame);
+            }
+        }
+
+        public async Task<VoiceCallState> JoinAutomaticVoice(VoiceCapabilities capabilities)
+        {
+            var user = GetCurrentUser();
+            if (capabilities == null || (!capabilities.SupportsWebRtc && !capabilities.SupportsHttpsAudio))
+                throw new HubException("This browser cannot run encrypted WebRTC or HTTPS audio");
+            VoiceCallState result;
+            lock (VoiceGate)
+            {
+                if (VoiceUsers.ContainsKey(Context.ConnectionId))
+                    throw new HubException("Leave the current call before joining again");
+                AutomaticCalls.TryGetValue(user.Channel, out var previous);
+                var https = previous?.HttpsAudio == true || capabilities.ForceStealth || !capabilities.SupportsWebRtc;
+                var members = AutomaticMembers(user.Channel);
+                if (https && (!capabilities.SupportsHttpsAudio || members.Any(id => !AutomaticVoiceUsers[id].SupportsHttpsAudio)))
+                    throw new HubException("Everyone needs an HTTPS-audio-capable browser to switch this call to Stealth");
+                var opus = capabilities.SupportsOpus && (previous?.Opus ?? true);
+                var revision = ++_voiceRevision;
+                AutomaticCalls[user.Channel] = new VoiceCallState
+                {
+                    Revision = revision,
+                    MediaRevision = previous == null || previous.HttpsAudio != https || (https && previous.Opus != opus)
+                        ? revision : previous.MediaRevision,
+                    HttpsAudio = https,
+                    Opus = opus,
+                    Reason = previous?.HttpsAudio == true ? previous.Reason
+                        : https ? capabilities.ForceStealth
+                            ? "A participant requested Stealth audio; the whole call is audio-only."
+                            : "A browser needs HTTPS audio; the whole call is audio-only."
+                        : "Automatic: using encrypted WebRTC."
+                };
+                AutomaticVoiceUsers[Context.ConnectionId] = new VoiceCapabilities
+                {
+                    ForceStealth = capabilities.ForceStealth,
+                    SupportsWebRtc = capabilities.SupportsWebRtc,
+                    SupportsHttpsAudio = capabilities.SupportsHttpsAudio,
+                    SupportsOpus = capabilities.SupportsOpus
+                };
+                SetAutomaticTransport(user.Channel, https);
+                result = AutomaticSnapshot(user.Channel, Context.ConnectionId);
+            }
+            await NotifyAutomaticCall(user.Channel);
+            await NotifyAll(user.Channel, MessageTypeEnum.Joined);
+            return result;
+        }
+
+        public async Task<VoiceCallState> RequestHttpsAudio(long mediaRevision)
+        {
+            var user = GetCurrentUser();
+            VoiceCallState result;
+            lock (VoiceGate)
+            {
+                if (!AutomaticVoiceUsers.ContainsKey(Context.ConnectionId))
+                    throw new HubException("Join the automatic call before requesting fallback");
+                var current = AutomaticCalls[user.Channel];
+                if (!current.HttpsAudio && current.MediaRevision == mediaRevision)
+                {
+                    if (AutomaticMembers(user.Channel).Any(id => !AutomaticVoiceUsers[id].SupportsHttpsAudio))
+                        throw new HubException("A participant's browser cannot use HTTPS audio");
+                    var revision = ++_voiceRevision;
+                    AutomaticCalls[user.Channel] = new VoiceCallState
+                    {
+                        Revision = revision, MediaRevision = revision, HttpsAudio = true, Opus = current.Opus,
+                        Reason = "WebRTC media could not connect; the whole call switched to Stealth audio."
+                    };
+                    SetAutomaticTransport(user.Channel, true);
+                }
+                result = AutomaticSnapshot(user.Channel, Context.ConnectionId);
+            }
+            await NotifyAutomaticCall(user.Channel);
+            await NotifyAll(user.Channel, MessageTypeEnum.Joined);
+            return result;
+        }
+
+        private static List<string> AutomaticMembers(string channel) => AutomaticVoiceUsers.Keys
+            .Where(id => Users.TryGetValue(id, out var user) && user.Channel == channel).ToList();
+
+        private static void SetAutomaticTransport(string channel, bool https)
+        {
+            foreach (var id in AutomaticMembers(channel)) VoiceUsers[id] = https ? (byte)1 : (byte)0;
+        }
+
+        private static VoiceCallState AutomaticSnapshot(string channel, string id)
+        {
+            var state = AutomaticCalls[channel];
+            return new VoiceCallState
+            {
+                Revision = state.Revision, MediaRevision = state.MediaRevision,
+                HttpsAudio = state.HttpsAudio, Opus = state.Opus, Reason = state.Reason,
+                Participants = GetVoiceParticipants(channel, id, state.HttpsAudio ? (byte)1 : (byte)0)
+            };
+        }
+
+        private async Task NotifyAutomaticCall(string channel)
+        {
+            List<(string Id, VoiceCallState State)> updates;
+            lock (VoiceGate)
+            {
+                updates = AutomaticMembers(channel).Select(id => (id, AutomaticSnapshot(channel, id))).ToList();
+            }
+            foreach (var update in updates) await Clients.Client(update.Id).VoiceCallChanged(update.State);
+        }
+
+        private async Task RemoveAutomaticVoice(string id, string channel)
+        {
+            lock (VoiceGate)
+            {
+                if (!AutomaticVoiceUsers.TryRemove(id, out _)) return;
+                VoiceUsers.TryRemove(id, out _);
+                if (AutomaticMembers(channel).Count == 0) AutomaticCalls.Remove(channel);
+                else AutomaticCalls[channel].Revision = ++_voiceRevision;
+            }
+            await NotifyAutomaticCall(channel);
+        }
+
+        public async Task SendAutomaticAudio(long mediaRevision, byte[] frame)
+        {
+            var user = GetCurrentUser();
+            VoiceCallState state;
+            lock (VoiceGate)
+            {
+                if (!AutomaticVoiceUsers.ContainsKey(Context.ConnectionId))
+                    throw new HubException("Join the automatic call before sending audio");
+                state = AutomaticCalls[user.Channel];
+            }
+            var window = Environment.TickCount64 / 1000;
+            var rate = AudioRates.AddOrUpdate(Context.ConnectionId, (window, 1),
+                (_, previous) => previous.Window == window ? (window, previous.Count + 1) : (window, 1));
+            if (rate.Count > HttpsAudioProtocol.MaximumFramesPerSecond || frame == null || frame.Length < 42 ||
+                frame.Length > HttpsAudioProtocol.MaximumOpusFrameSize || (frame[0] != 1 && frame[0] != 2) ||
+                (state.HttpsAudio && state.MediaRevision == mediaRevision &&
+                    (frame[0] != (state.Opus ? 2 : 1) || (!state.Opus && frame.Length != HttpsAudioProtocol.FrameSize))))
+            {
+                _logger.LogWarning("Rejected invalid or excessive automatic audio from {ConnectionId}", Context.ConnectionId);
+                await LeaveVoice();
+                await Clients.Caller.HttpsAudioFailed("Stealth audio stopped: invalid frame or excessive send rate.");
+                return;
+            }
+            if (!state.HttpsAudio || state.MediaRevision != mediaRevision)
+            {
+                _logger.LogDebug("Discarded audio from an obsolete call revision for {ConnectionId}", Context.ConnectionId);
+                return;
+            }
+            foreach (var peer in GetVoiceParticipants(user.Channel, Context.ConnectionId, 1))
+                await Clients.Client(peer.ConnectionId).ReceiveAutomaticAudio(mediaRevision, Context.ConnectionId, frame);
         }
 
         public Task<TurnCredentials> GetTurnCredentials()
@@ -275,10 +488,17 @@ namespace DomainLogic
         public async Task LeaveVoice()
         {
             var userInfo = GetCurrentUser();
-            if (VoiceUsers.TryRemove(Context.ConnectionId, out _))
+            AudioRates.TryRemove(Context.ConnectionId, out _);
+            if (VoiceUsers.TryRemove(Context.ConnectionId, out var transport))
             {
                 await Clients.Group(userInfo.Channel).VoiceParticipantLeft(Context.ConnectionId);
+                if (transport == 1)
+                {
+                    await NotifyHttpsAudioParticipants(userInfo.Channel);
+                    await NotifyAll(userInfo.Channel, MessageTypeEnum.Left);
+                }
             }
+            await RemoveAutomaticVoice(Context.ConnectionId, userInfo.Channel);
         }
 
         public Task SendVoiceOffer(string targetConnectionId, string offer)
@@ -313,8 +533,9 @@ namespace DomainLogic
         {
             var userInfo = GetCurrentUser();
             if (targetConnectionId == Context.ConnectionId ||
-                !VoiceUsers.ContainsKey(Context.ConnectionId) ||
-                !VoiceUsers.ContainsKey(targetConnectionId) ||
+                !VoiceUsers.TryGetValue(Context.ConnectionId, out var sourceTransport) || sourceTransport != 0 ||
+                !VoiceUsers.TryGetValue(targetConnectionId, out var targetTransport) || targetTransport != 0 ||
+                AutomaticVoiceUsers.ContainsKey(Context.ConnectionId) != AutomaticVoiceUsers.ContainsKey(targetConnectionId) ||
                 !Users.TryGetValue(targetConnectionId, out var target) ||
                 target.Channel != userInfo.Channel)
             {
@@ -368,7 +589,8 @@ namespace DomainLogic
                 .Select(x => new OnlineUser
                 {
                     ConnectionId = x.Key,
-                    Name = GetDisplayName(x.Value)
+                    Name = GetDisplayName(x.Value),
+                    HttpsAudio = VoiceUsers.TryGetValue(x.Key, out var transport) && transport == 1
                 })
                 .ToList();
             
