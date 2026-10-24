@@ -3,7 +3,7 @@ const assert = require("node:assert/strict");
 const fs = require("node:fs");
 const path = require("node:path");
 const vm = require("node:vm");
-const { webcrypto } = require("node:crypto");
+const { webcrypto, createHash } = require("node:crypto");
 
 const directory = path.join(__dirname, "..", "wwwroot", "js");
 const key = Buffer.alloc(32, 7).toString("base64");
@@ -20,7 +20,7 @@ function modules(extra = {}) {
             initializeImportMeta(meta) { meta.url = `https://localhost/js/${name}`; }
         });
         cache.set(name, module);
-        await module.link(specifier => load(path.basename(specifier)));
+        await module.link(specifier => load(path.join(path.dirname(name), specifier)));
         return module;
     }
     return async name => {
@@ -97,8 +97,21 @@ test("G.711 codec matches standard vectors and keeps samples finite and bounded"
     }
 });
 
-for (const rate of [8000, 44100, 48000]) {
-    test(`Audio worklet resamples ${rate} Hz capture, mutes and bounds playback`, async () => {
+test("Library G.711 remains wire-compatible for every PCM16 sample and every encoded byte", async () => {
+    const codec = await modules()("https-audio-codec.js");
+    const encoded = Uint8Array.from({ length: 65536 }, (_, index) => codec.encodeMuLaw((index - 32768) / 32768));
+    const decoded = Float32Array.from({ length: 256 }, (_, index) => codec.decodeMuLaw(index));
+    assert.equal(createHash("sha256").update(encoded).digest("hex"),
+        "5ee7cf5f273f842d2234121e4cb0c98d6b20a99ac29026f94e05b36955b195be");
+    assert.equal(createHash("sha256").update(new Uint8Array(decoded.buffer)).digest("hex"),
+        "34371823a5daca165d7cae3c7afa7ea7683ab9176cc8423deaa23c97199adc7f");
+    assert.equal(codec.encodeMuLaw(2), codec.encodeMuLaw(1));
+    assert.equal(codec.encodeMuLaw(-2), codec.encodeMuLaw(-1));
+});
+
+for (const opus of [false, true]) {
+    const rate = opus ? 48000 : 8000;
+    test(`Audio worklet uses native ${rate} Hz capture, mutes and bounds playback`, async () => {
         let Processor;
         class Base {
             constructor() {
@@ -111,18 +124,19 @@ for (const rate of [8000, 44100, 48000]) {
             registerProcessor(name, type) { assert.equal(name, "https-audio"); Processor = type; }
         });
         await load("https-audio-worklet.js");
-        const processor = new Processor();
+        const processor = new Processor({ processorOptions: { opus } });
         const output = new Float32Array(128);
         for (let index = 0; index < 150; index++) {
             processor.process([[new Float32Array(128).fill(0.25)]], [[output]]);
         }
         const captures = processor.messages.filter(message => message.type === "capture");
-        assert.equal(captures.length, Math.floor(150 * 128 * 8000 / rate / 320));
-        assert.ok(captures.every(message => message.samples.length === 320));
+        const frameSamples = opus ? 1920 : 320;
+        assert.equal(captures.length, Math.floor(150 * 128 / frameSamples));
+        assert.ok(captures.every(message => message.samples.length === frameSamples));
         processor.port.onmessage({ data: { type: "muted", muted: true } });
         for (let index = 0; index < 30; index++) processor.process([[new Float32Array(128)]], [[output]]);
         assert.equal(processor.messages.length, captures.length);
-        const samples = new Uint8Array(320).fill(0x80);
+        const samples = opus ? new Float32Array(frameSamples).fill(0.98) : new Uint8Array(frameSamples).fill(0x80);
         processor.port.onmessage({ data: { type: "audio", id: "peer", samples } });
         processor.process([[]], [[output]]);
         assert.ok(output.every(value => value === 0), "Playback must wait for its jitter buffer");
@@ -131,7 +145,7 @@ for (const rate of [8000, 44100, 48000]) {
         assert.ok(output.some(value => value > 0.9));
         for (let index = 0; index < 12; index++)
             processor.port.onmessage({ data: { type: "audio", id: "peer", samples } });
-        assert.equal(processor.peers.get("peer").count, 3200);
+        assert.equal(processor.peers.get("peer").count, rate * 0.4);
         assert.ok(processor.messages.some(message => message.type === "playback-overrun"));
         processor.port.onmessage({ data: { type: "peers", ids: [] } });
         processor.process([[]], [[output]]);
@@ -139,6 +153,16 @@ for (const rate of [8000, 44100, 48000]) {
         assert.ok(output.every(value => value === 0));
     });
 }
+
+test("Worklet rejects a mismatched context instead of silently resampling or mislabeling audio", async () => {
+    let Processor;
+    await modules({
+        sampleRate: 44100, AudioWorkletProcessor: class {},
+        registerProcessor(name, type) { Processor = type; }
+    })("https-audio-worklet.js");
+    assert.throws(() => new Processor(), /8000 Hz AudioContext/);
+    assert.throws(() => new Processor({ processorOptions: { opus: true } }), /48000 Hz AudioContext/);
+});
 
 function audioHarness(extra = {}) {
     const h = { now: 0, calls: [], contexts: [], requests: [], nodes: [], streams: [] };
@@ -152,8 +176,9 @@ function audioHarness(extra = {}) {
         return stream;
     };
     class Context {
-        constructor() {
+        constructor(options) {
             this.state = "running";
+            this.sampleRate = h.sampleRate ?? options.sampleRate;
             this.destination = {};
             this.audioWorklet = { addModule: async () => { if (h.workletError) throw h.workletError; } };
             h.contexts.push(this);
@@ -342,6 +367,7 @@ test("Native Opus uses WebCodecs, encrypts only encoded packets, preserves mute 
     const h = audioHarness(codecs);
     const audio = await h.load("https-audio.js");
     await audio.initialize(h.reference, key, true, true, 17);
+    assert.equal(h.contexts[0].sampleRate, 48000, "Web Audio must perform native Opus sample-rate conversion");
     await audio.setParticipants([{ connectionId: "peer" }]);
     assert.equal(h.streams[0].track.enabled, false, "Transitioning must not unmute the microphone");
     audio.setMuted(false);
@@ -394,6 +420,7 @@ test("HTTPS audio captures only with peers, encrypts sends, authenticates playba
     const h = audioHarness();
     const audio = await h.load("https-audio.js");
     await audio.initialize(h.reference, key);
+    assert.equal(h.contexts[0].sampleRate, 8000, "Web Audio must perform native G.711 sample-rate conversion");
     assert.equal(h.requests.length, 0);
     h.tick();
     assert.equal(h.calls.at(-1).args[0], "waiting", "Never report healthy before authenticated audio");
@@ -497,6 +524,16 @@ test("Worklet failure fails closed and a later initialize can retry", async () =
     h.workletError = undefined;
     await audio.initialize(h.reference, key);
     await audio.leave();
+});
+
+test("A browser ignoring the requested sample rate fails explicitly and releases its context", async () => {
+    const h = audioHarness();
+    h.sampleRate = 44100;
+    const audio = await h.load("https-audio.js");
+    await assert.rejects(audio.initialize(h.reference, key), /browser-native 8000 Hz audio processing/);
+    assert.equal(h.contexts[0].state, "closed");
+    assert.equal(h.requests.length, 0);
+    assert.equal(h.sent().length, 0);
 });
 
 for (const failure of ["microphone", "processor"]) {

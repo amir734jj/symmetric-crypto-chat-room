@@ -1,4 +1,5 @@
 import { AudioFrameError, createAudioCipher } from "./https-audio-crypto.js";
+import { audioSampleRate } from "./https-audio-codec.js";
 import { getCapabilities, opusSampleRate, opusFrameSamples, opusFrameDuration,
     opusEncoderConfig, opusDecoderConfig, packOpusChunk, unpackOpusPacket } from "./https-audio-opus.js";
 
@@ -42,7 +43,11 @@ export async function initialize(reference, base64Key, opus = false, muted = fal
         }
         session.cipher = await createAudioCipher(base64Key, opus, mediaRevision);
         if (active !== session) return;
-        session.context = new AudioContext({ latencyHint: "interactive", ...(opus ? { sampleRate: opusSampleRate } : {}) });
+        const sampleRate = opus ? opusSampleRate : audioSampleRate;
+        session.context = new AudioContext({ latencyHint: "interactive", sampleRate });
+        if (session.context.sampleRate !== sampleRate) {
+            throw new Error(`Stealth audio requires browser-native ${sampleRate} Hz audio processing`);
+        }
         await session.context.audioWorklet.addModule(new URL("./https-audio-worklet.js", import.meta.url));
         if (active !== session) return;
         session.node = new AudioWorkletNode(session.context, "https-audio", {

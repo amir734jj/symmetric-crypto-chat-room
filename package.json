@@ -1,0 +1,12 @@
+{
+  "name": "symmetric-crypto-chat-room",
+  "private": true,
+  "scripts": {
+    "postinstall": "node scripts/vendor-codecs.cjs",
+    "check:vendor": "node scripts/vendor-codecs.cjs --check",
+    "test": "node --experimental-vm-modules --test UI/Tests/*.test.cjs Tests/turn-startup.test.cjs"
+  },
+  "dependencies": {
+    "alawmulaw": "6.0.0"
+  }
+}

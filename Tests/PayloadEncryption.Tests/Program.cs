@@ -19,6 +19,23 @@ foreach (var (password, channel, expectedHex) in new[]
 Console.WriteLine("PASS: C# voice key derivation matches independent short-password and Unicode PBKDF2 vectors");
 
 var cipher = new SymmetricCryptography();
+Check(cipher.Encrypt(new byte[32], new byte[16]).SequenceEqual(
+    Convert.FromHexString("dc95c078a2408989ad48a21492842087")),
+    "Official Bouncy Castle must preserve the established AES-256-CTR zero-counter format");
+var compatibilityKey = Enumerable.Range(0, 32).Select(index => (byte)index).ToArray();
+var compatibilityPlaintext = Enumerable.Range(0, 131111).Select(index => (byte)(index % 251)).ToArray();
+var compatibilityCiphertext = await cipher.EncryptAsync(compatibilityKey, compatibilityPlaintext);
+Check(SHA256.HashData(compatibilityCiphertext).SequenceEqual(
+    Convert.FromHexString("93a3f3dbd096c9dae9c7c378f51b4f7c74c155df5ed7aadff92e7e26ece0df8e")),
+    "Chunked library encryption must match an independent Node/OpenSSL AES-CTR fixture");
+Check(cipher.Encrypt(compatibilityKey, compatibilityPlaintext).SequenceEqual(compatibilityCiphertext) &&
+    (await cipher.DecryptAsync(compatibilityKey, compatibilityCiphertext)).SequenceEqual(compatibilityPlaintext),
+    "Synchronous and asynchronous encryption must preserve existing ciphertext across chunk boundaries");
+Check(HashingUtility.HashString("abc").SequenceEqual(
+    Convert.FromHexString("ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad")),
+    "The official library must preserve legacy SHA-256 password keys");
+Console.WriteLine("PASS: official cryptography library matches independent AES-CTR and SHA-256 compatibility vectors");
+
 var keyDerivation = new TestKeyDerivation();
 var service = new PayloadEncryptionService(cipher, NullLogger<PayloadEncryptionService>.Instance, keyDerivation);
 

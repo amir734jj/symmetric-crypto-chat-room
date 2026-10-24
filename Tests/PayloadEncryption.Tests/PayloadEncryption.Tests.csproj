@@ -8,7 +8,7 @@
   <ItemGroup>
     <ProjectReference Include="..\..\Models\Models.csproj" />
     <FrameworkReference Include="Microsoft.AspNetCore.App" />
-    <PackageReference Include="BouncyCastle.NetCore" Version="2.2.1" />
+    <PackageReference Include="BouncyCastle.Cryptography" Version="2.7.0" />
     <PackageReference Include="SharpZipLib" Version="1.4.2" />
     <Compile Include="..\..\UI\HashingUtility.cs" Link="HashingUtility.cs" />
     <Compile Include="..\..\UI\SymmetricCryptography.cs" Link="SymmetricCryptography.cs" />
