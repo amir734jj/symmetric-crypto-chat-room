@@ -29,7 +29,7 @@ MESSAGE_RETENTION_MINUTES=720
 
 For example, `1440` retains new messages for 24 hours and `60` for one hour. Restart/redeploy the API after changing this setting. Missing configuration uses 720 minutes; malformed, zero or negative values fail startup explicitly. The chat page reads and displays the actual server setting rather than a hard-coded duration.
 
-The setting applies when each message is recorded, including its encrypted attachments. Existing records keep their original expiration; deleted messages cannot be recovered by increasing retention. Expired messages are excluded from replay immediately, and physical cleanup runs roughly once per minute. Persist `DATABASE_PATH` across deployments and allow sufficient disk space for the longer cache. Voice media is never cached. The browser's existing 15-message display limit is separate from server retention and is unchanged.
+The setting applies when each message is recorded, including its encrypted attachments. File-only messages (with no text) use the same retention, and their encrypted file names and contents are replayed to users who join before expiration, even after the sender leaves. Existing records keep their original expiration; deleted messages cannot be recovered by increasing retention. Expired messages are excluded from replay immediately, and physical cleanup runs roughly once per minute. Persist `DATABASE_PATH` across deployments and allow sufficient disk space for the longer cache. Voice media is never cached. The browser's existing 15-message display limit is separate from server retention and is unchanged.
 
 ### Opt-in channel push notifications
 
