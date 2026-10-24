@@ -450,6 +450,12 @@ test("HTTPS audio captures only with peers, encrypts sends, authenticates playba
     assert.equal(playback[1].samples[0], 0xee);
     assert.equal(h.calls.at(-1).args[1], false);
     h.tick();
+    assert.equal(h.calls.at(-1).args[0], "waiting", "Authenticated packets alone must not claim working playback");
+    h.nodes[0].port.onmessage({ data: {
+        type: "stats", capturedSamples: 640, microphonePeak: 0.25,
+        playedSamples: 640, playbackPeak: 0.25, bufferedSamples: 0, underruns: 0
+    } });
+    h.tick();
     assert.equal(h.calls.at(-1).args[0], "healthy");
     await audio.setParticipants([]);
     assert.equal(h.streams[0].track.stopped, true);
@@ -569,4 +575,129 @@ test("Automatic UI defaults to WebRTC and provides a whole-call Stealth override
     const dispose = markup.slice(markup.indexOf("public async ValueTask DisposeAsync()"));
     assert.match(dispose, /if \(_joined && State\.UserInfo != null\)/);
     assert.match(dispose, /finally\s*\{\s*await CleanupBrowserVoice\(\)/);
+});
+
+test("HTTPS diagnostics distinguish capture, authentication and playback without exposing secrets", async () => {
+    const h = audioHarness();
+    const audio = await h.load("https-audio.js");
+    await audio.initialize(h.reference, key, false, false, 17);
+    assert.match(audio.getConnectionDiagnostics(), /Waiting for another participant/);
+    await audio.setParticipants([{ connectionId: "peer" }]);
+    h.now = 6000;
+    assert.match(audio.getConnectionDiagnostics(), /no capture frames/);
+    h.captureFrame();
+    await waitUntil(() => JSON.parse(audio.getConnectionDiagnostics()).uploadedFrames === 1);
+    let stats = JSON.parse(audio.getConnectionDiagnostics());
+    assert.equal(stats.captureFrames, 1);
+    assert.equal(stats.encodedFrames, 1);
+    assert.equal(stats.bytesSent, 361);
+    assert.match(stats.diagnosis.join(" "), /No incoming HTTPS audio/);
+    await audio.receiveAudio("peer", new Uint8Array(361));
+    stats = JSON.parse(audio.getConnectionDiagnostics());
+    assert.equal(stats.incomingFrames, 1);
+    assert.equal(stats.rejectedFrames, 1);
+    assert.match(stats.diagnosis.join(" "), /unreadable/);
+    const { createAudioCipher } = await h.load("https-audio-crypto.js");
+    const remote = await createAudioCipher(key, false, 17);
+    await audio.receiveAudio("peer", await remote.encrypt(new Uint8Array(320)));
+    stats = JSON.parse(audio.getConnectionDiagnostics());
+    assert.equal(stats.authenticatedFrames, 1);
+    assert.equal(stats.decodedFrames, 1);
+    assert.match(stats.diagnosis.join(" "), /playback has not been confirmed/);
+    h.nodes[0].port.onmessage({ data: {
+        type: "stats", capturedSamples: 320, microphonePeak: 0.25,
+        playedSamples: 320, playbackPeak: 0.25, bufferedSamples: 0, underruns: 0
+    } });
+    assert.match(JSON.parse(audio.getConnectionDiagnostics()).diagnosis.join(" "), /worklet playback are active/);
+    h.contexts[0].state = "suspended";
+    assert.match(audio.getConnectionDiagnostics(), /Browser audio context is suspended/);
+    h.nodes[0].port.onmessage({ data: { type: "playback-overrun" } });
+    h.now++;
+    h.tick();
+    assert.equal(h.calls.at(-1).args[0], "waiting");
+    assert.match(h.calls.at(-1).args[1], /Browser audio context is suspended/);
+    h.contexts[0].resume = async () => { h.contexts[0].state = "running"; };
+    await audio.resumeAudio();
+    audio.setMuted(true);
+    assert.match(audio.getConnectionDiagnostics(), /Your microphone is muted/);
+    assert.ok(!audio.getConnectionDiagnostics().includes(key));
+    await audio.leave();
+    assert.equal(JSON.parse(audio.getConnectionDiagnostics()).active, false);
+    assert.equal(JSON.parse(audio.getConnectionDiagnostics()).uploadedFrames, 1);
+    await assert.rejects(audio.resumeAudio(), /Join an HTTPS/);
+});
+
+test("Permission and initialization errors remain inspectable after cleanup", async () => {
+    const h = audioHarness();
+    const audio = await h.load("https-audio.js");
+    await audio.initialize(h.reference, key);
+    h.capture = async () => { throw Object.assign(new Error("Microphone permission denied"), { name: "NotAllowedError" }); };
+    await assert.rejects(audio.setParticipants([{ connectionId: "peer" }]), /permission denied/);
+    await audio.leave();
+    let stats = JSON.parse(audio.getConnectionDiagnostics());
+    assert.equal(stats.lastError.stage, "microphone capture");
+    assert.equal(stats.lastError.name, "NotAllowedError");
+    assert.match(stats.diagnosis.join(" "), /permission denied/);
+    h.workletError = new Error("Worklet download failed");
+    await assert.rejects(audio.initialize(h.reference, key), /download failed/);
+    stats = JSON.parse(audio.getConnectionDiagnostics());
+    assert.equal(stats.lastError.stage, "audio worklet loading");
+    assert.equal(stats.active, false);
+    assert.match(stats.diagnosis.join(" "), /download failed/);
+});
+
+test("An upload failure records the precise failing stage before cleanup", async () => {
+    const h = audioHarness();
+    const audio = await h.load("https-audio.js");
+    h.send = async () => { throw new Error("SignalR connection is closed"); };
+    await audio.initialize(h.reference, key);
+    await audio.setParticipants([{ connectionId: "peer" }]);
+    h.captureFrame();
+    await waitUntil(() => h.contexts[0].state === "closed");
+    const stats = JSON.parse(audio.getConnectionDiagnostics());
+    assert.equal(stats.lastError.stage, "encrypted upload");
+    assert.match(stats.lastError.message, /SignalR connection is closed/);
+    assert.equal(stats.uploadedFrames, 0);
+    assert.equal(stats.active, false);
+});
+
+test("Worklet diagnostic snapshots measure real input/output and reset recent peaks", async () => {
+    let Processor;
+    const load = modules({
+        sampleRate: 8000,
+        AudioWorkletProcessor: class {
+            constructor() { this.messages = []; this.port = { postMessage: data => this.messages.push(data) }; }
+        },
+        registerProcessor(_name, type) { Processor = type; }
+    });
+    await load("https-audio-worklet.js");
+    const processor = new Processor();
+    const output = new Float32Array(128);
+    const samples = new Uint8Array(320).fill(0x80);
+    processor.port.onmessage({ data: { type: "audio", id: "peer", samples } });
+    processor.port.onmessage({ data: { type: "audio", id: "peer", samples } });
+    processor.process([[new Float32Array(128).fill(0.25)]], [[output]]);
+    processor.port.onmessage({ data: { type: "get-stats" } });
+    const stats = processor.messages.at(-1);
+    assert.equal(stats.capturedSamples, 128);
+    assert.equal(stats.microphonePeak, 0.25);
+    assert.equal(stats.playedSamples, 128);
+    assert.ok(stats.playbackPeak > 0.9);
+    assert.equal(stats.bufferedSamples, 512);
+    processor.port.onmessage({ data: { type: "get-stats" } });
+    assert.equal(processor.messages.at(-1).microphonePeak, 0);
+    assert.equal(processor.messages.at(-1).playbackPeak, 0);
+    assert.equal(processor.messages.at(-1).playedSamples, 128);
+});
+
+test("Debug mode opens live call diagnostics and preserves the last HTTPS failure", () => {
+    const markup = fs.readFileSync(path.join(__dirname, "..", "Components", "VoiceChannel.razor"), "utf8");
+    assert.match(markup, /DebugMode && !_debugModeEnabled/);
+    assert.match(markup, /_joined \|\| _lastHttpsDiagnostics != null/);
+    assert.match(markup, /HTTPS audio diagnostics/);
+    assert.match(markup, /OnClick="ResumeHttpsAudio"/);
+    assert.match(markup, /_showDebug = DebugMode && _lastHttpsDiagnostics != null/);
+    const timer = markup.slice(markup.indexOf("private async Task UpdateCallDuration"));
+    assert.match(timer, /getConnectionDiagnostics/);
+    assert.match(timer, /Unable to refresh call diagnostics/);
 });

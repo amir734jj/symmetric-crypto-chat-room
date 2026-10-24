@@ -1,5 +1,6 @@
 @using Models
 @using Microsoft.AspNetCore.SignalR
+@using System.Reflection
 @inject SignalRStateManager SignalRStateManager
 @inject State State
 @inject IJSRuntime Js
@@ -196,10 +197,10 @@
                 <HxButton Color="@TurnHealthColor" Enabled="@(!_checkingTurn)" OnClick="CheckTurnHealth">
                     @TurnHealthButtonText
                 </HxButton>
-                @if (_joined)
+                @if (_joined || _lastHttpsDiagnostics != null)
                 {
                     <HxButton Color="ThemeColor.Secondary" OnClick="ToggleDebug">
-                        @(_showDebug ? "Hide ICE debug" : "ICE debug")
+                        @(_showDebug ? "Hide call debug" : "Call debug")
                     </HxButton>
                 }
             </div>
@@ -287,8 +288,14 @@
     {
         <div class="voice-debug mt-3">
             <div class="voice-debug-header">
-                <strong>@(_useHttpsAudio ? "HTTPS audio relay details" : "ICE connection details")</strong>
+                <strong>@(_useHttpsAudio || (!_joined && _lastHttpsDiagnostics != null) ? "HTTPS audio diagnostics" : "ICE connection details")</strong>
                 <div>
+                    @if (_joined && _useHttpsAudio)
+                    {
+                        <HxButton Size="ButtonSize.Small" Color="ThemeColor.Secondary" OnClick="ResumeHttpsAudio">
+                            Resume audio
+                        </HxButton>
+                    }
                     <HxButton Size="ButtonSize.Small" Color="ThemeColor.Secondary" OnClick="RefreshDebug">
                         Refresh
                     </HxButton>
@@ -352,7 +359,10 @@
 
     [Parameter] public bool DebugMode { get; set; }
 
-    private const string VoiceModulePath = "./js/voice-chat.js";
+    private static readonly string CallAssetsPath = "./js/call/" +
+        typeof(VoiceChannel).Assembly.GetCustomAttributes<System.Reflection.AssemblyMetadataAttribute>()
+            .Single(attribute => attribute.Key == "CallAssetVersion").Value + "/";
+    private static readonly string VoiceModulePath = CallAssetsPath + "voice-chat.js";
 
     private static readonly TimeSpan RingTimeout = TimeSpan.FromSeconds(30);
     private readonly HashSet<string> _participantIds = [];
@@ -403,6 +413,8 @@
     private bool _transcriptionEnabled;
     private string? _error;
     private string? _debugInfo;
+    private string? _lastHttpsDiagnostics;
+    private bool _debugModeEnabled;
     private string? _transcriptionStatus;
     private string? _incomingCallerConnectionId;
     private string? _incomingCallerName;
@@ -494,10 +506,16 @@
 
     protected override void OnParametersSet()
     {
+        if (DebugMode && !_debugModeEnabled)
+        {
+            _showDebug = true;
+            _debugInfo = _lastHttpsDiagnostics;
+        }
         if (!DebugMode && _showDebug)
         {
             HideDebug();
         }
+        _debugModeEnabled = DebugMode;
     }
 
     protected override void OnInitialized()
@@ -587,13 +605,15 @@
         _busy = true;
         _joiningAutomatic = true;
         _error = null;
+        _lastHttpsDiagnostics = null;
+        _showDebug = DebugMode;
 
         try
         {
             await EnsureQualityDefaults();
             _reference ??= DotNetObjectReference.Create(this);
 
-            _httpsAudioModule ??= await Js.InvokeAsync<IJSObjectReference>("import", "./js/https-audio.js");
+            _httpsAudioModule ??= await Js.InvokeAsync<IJSObjectReference>("import", CallAssetsPath + "https-audio.js");
             _voiceCapabilities = await _httpsAudioModule.InvokeAsync<VoiceCapabilities>("getCapabilities");
             _voiceCapabilities.ForceStealth = _forceStealth;
             var state = await SignalRStateManager.JoinAutomaticVoice(_voiceCapabilities);
@@ -1250,14 +1270,43 @@
 
     private async Task RefreshDebug()
     {
+        if (!_joined && _lastHttpsDiagnostics != null)
+        {
+            _debugInfo = _lastHttpsDiagnostics;
+            return;
+        }
         var module = ActiveAudioModule;
         if (module == null) return;
 
         var requestVersion = ++_debugRequestVersion;
-        var debugInfo = await module.InvokeAsync<string>("getConnectionDiagnostics");
+        string debugInfo;
+        try
+        {
+            debugInfo = await module.InvokeAsync<string>("getConnectionDiagnostics");
+        }
+        catch (JSException exception)
+        {
+            Logger.LogWarning(exception, "Unable to read call diagnostics");
+            debugInfo = $"Unable to read call diagnostics: {exception.Message}";
+        }
         if (_showDebug && requestVersion == _debugRequestVersion)
         {
             _debugInfo = debugInfo;
+        }
+    }
+
+    private async Task ResumeHttpsAudio()
+    {
+        if (!_joined || !_useHttpsAudio || _httpsAudioModule == null) return;
+        try
+        {
+            await _httpsAudioModule.InvokeVoidAsync("resumeAudio");
+            await RefreshDebug();
+        }
+        catch (JSException exception)
+        {
+            Logger.LogWarning(exception, "Unable to resume HTTPS audio");
+            _error = $"Unable to resume audio: {exception.Message}";
         }
     }
 
@@ -1615,6 +1664,8 @@
             while (await timer.WaitForNextTickAsync(cancellationToken))
             {
                 double[]? dataRates = null;
+                string? debugInfo = null;
+                var debugVersion = _debugRequestVersion;
                 var module = ActiveAudioModule;
                 if (_joined && _showDebug && module != null)
                 {
@@ -1623,12 +1674,16 @@
                         dataRates = await module.InvokeAsync<double[]?>(
                             "getLiveDataRateMbps",
                             cancellationToken);
+                        debugInfo = await module.InvokeAsync<string>(
+                            "getConnectionDiagnostics", cancellationToken);
                     }
                     catch when (cancellationToken.IsCancellationRequested || !_joined)
                     {
                     }
-                    catch
+                    catch (Exception exception)
                     {
+                        Logger.LogWarning(exception, "Unable to refresh call diagnostics");
+                        debugInfo = $"Unable to refresh call diagnostics: {exception.Message}";
                         dataRates = null;
                     }
                 }
@@ -1636,6 +1691,8 @@
                 await InvokeAsync(() =>
                 {
                     _callDuration = _callStopwatch?.Elapsed ?? TimeSpan.Zero;
+                    if (_joined && _showDebug && debugVersion == _debugRequestVersion)
+                        _debugInfo = debugInfo;
                     if (dataRates is { Length: >= 2 })
                     {
                         _sendMbps = dataRates[0];
@@ -1679,6 +1736,20 @@
         if (_httpsAudioModule != null)
         {
             await _httpsAudioModule.InvokeVoidAsync("leave");
+            if (_useHttpsAudio)
+            {
+                try
+                {
+                    var diagnostics = await _httpsAudioModule.InvokeAsync<string>("getConnectionDiagnostics");
+                    _lastHttpsDiagnostics = string.IsNullOrWhiteSpace(_error)
+                        ? diagnostics : $"Last reported call error: {_error}\n\n{diagnostics}";
+                }
+                catch (JSException exception)
+                {
+                    Logger.LogWarning(exception, "Unable to preserve HTTPS audio diagnostics");
+                    _lastHttpsDiagnostics = $"Unable to preserve HTTPS audio diagnostics: {exception.Message}";
+                }
+            }
         }
         if (_module != null)
         {
@@ -1696,7 +1767,7 @@
         _videoEnabled = false;
         _screenSharing = false;
         _cameraEnabledBeforeScreenShare = false;
-        _showDebug = false;
+        _showDebug = DebugMode && _lastHttpsDiagnostics != null;
         _audioOutputSelectionSupported = false;
         _usesAudioSessionOutputModes = false;
         _screenWakeLockSupported = false;
@@ -1710,7 +1781,7 @@
         _transcriptionStatus = null;
         _transcript.Clear();
         _audioOutputMode = "auto";
-        _debugInfo = null;
+        _debugInfo = _lastHttpsDiagnostics;
         if (!preserveCallDuration)
         {
             StopCallTimer();

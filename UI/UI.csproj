@@ -28,4 +28,37 @@
       <ProjectReference Include="..\Models\Models.csproj" />
     </ItemGroup>
 
+    <Target Name="PrepareVersionedCallAssets" BeforeTargets="GetAssemblyAttributes;ResolveProjectStaticWebAssets">
+        <ItemGroup>
+            <_CallAsset Include="wwwroot\js\**\*" />
+        </ItemGroup>
+        <GetFileHash Files="@(_CallAsset)" Algorithm="SHA256">
+            <Output TaskParameter="Items" ItemName="_HashedCallAsset" />
+        </GetFileHash>
+        <WriteLinesToFile File="$(IntermediateOutputPath)call-assets.hashes"
+                          Lines="@(_HashedCallAsset->'%(Identity)=%(FileHash)')"
+                          Overwrite="true" WriteOnlyWhenDifferent="true" />
+        <GetFileHash Files="$(IntermediateOutputPath)call-assets.hashes" Algorithm="SHA256">
+            <Output TaskParameter="Items" ItemName="_CallAssetVersionFile" />
+        </GetFileHash>
+        <PropertyGroup>
+            <_CallAssetVersion>@(_CallAssetVersionFile->'%(FileHash)')</_CallAssetVersion>
+            <_CallAssetDirectory>$(IntermediateOutputPath)call-assets\$(_CallAssetVersion)\</_CallAssetDirectory>
+        </PropertyGroup>
+        <Copy SourceFiles="@(_CallAsset)"
+              DestinationFiles="@(_CallAsset->'$(_CallAssetDirectory)%(RecursiveDir)%(Filename)%(Extension)')"
+              SkipUnchangedFiles="true" />
+        <ItemGroup>
+            <_GeneratedCallAsset Include="$(_CallAssetDirectory)**\*" />
+            <Content Include="@(_GeneratedCallAsset)">
+                <Link>wwwroot\js\call\$(_CallAssetVersion)\%(_GeneratedCallAsset.RecursiveDir)%(_GeneratedCallAsset.Filename)%(_GeneratedCallAsset.Extension)</Link>
+                <CopyToPublishDirectory>PreserveNewest</CopyToPublishDirectory>
+            </Content>
+            <AssemblyAttribute Include="System.Reflection.AssemblyMetadataAttribute">
+                <_Parameter1>CallAssetVersion</_Parameter1>
+                <_Parameter2>$(_CallAssetVersion)</_Parameter2>
+            </AssemblyAttribute>
+        </ItemGroup>
+    </Target>
+
 </Project>

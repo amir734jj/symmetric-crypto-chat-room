@@ -11,8 +11,15 @@ class HttpsAudioProcessor extends AudioWorkletProcessor {
         this.captureIndex = 0;
         this.muted = false;
         this.peers = new Map();
+        this.stats = { capturedSamples: 0, microphonePeak: 0, playedSamples: 0, playbackPeak: 0, underruns: 0 };
         this.port.onmessage = ({ data }) => {
-            if (data.type === "muted") {
+            if (data.type === "get-stats") {
+                this.port.postMessage({
+                    type: "stats", ...this.stats,
+                    bufferedSamples: [...this.peers.values()].reduce((total, peer) => total + peer.count, 0)
+                });
+                this.stats.microphonePeak = this.stats.playbackPeak = 0;
+            } else if (data.type === "muted") {
                 this.muted = data.muted;
                 this.captureIndex = 0;
             } else if (data.type === "peers") {
@@ -46,6 +53,8 @@ class HttpsAudioProcessor extends AudioWorkletProcessor {
             if (input.length && !this.muted) {
                 let value = 0;
                 for (const channel of input) value += channel[index] / input.length;
+                this.stats.capturedSamples++;
+                this.stats.microphonePeak = Math.max(this.stats.microphonePeak, Math.abs(value));
                 this.capture[this.captureIndex++] = this.opus ? value : encodeMuLaw(value);
                 if (this.captureIndex === this.frameSamples) {
                     this.port.postMessage({ type: "capture", samples: this.capture }, [this.capture.buffer]);
@@ -57,6 +66,7 @@ class HttpsAudioProcessor extends AudioWorkletProcessor {
             let playing = 0;
             for (const peer of this.peers.values()) {
                 if (!peer.started || peer.count === 0) {
+                    if (peer.started) this.stats.underruns++;
                     peer.started = false;
                     continue;
                 }
@@ -66,6 +76,8 @@ class HttpsAudioProcessor extends AudioWorkletProcessor {
                 peer.count--;
             }
             output[index] = Math.max(-1, Math.min(1, mixed / Math.sqrt(playing || 1)));
+            if (playing) this.stats.playedSamples++;
+            this.stats.playbackPeak = Math.max(this.stats.playbackPeak, Math.abs(output[index]));
         }
         return true;
     }
