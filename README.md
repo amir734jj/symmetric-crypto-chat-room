@@ -9,7 +9,7 @@ Simple secure chat room web (+ file transfer) application using SignalR (dotnet 
 ### Note
 - `password` is never sent via a socket, You are responsible to exchange the symmetric key
 - Both encryption and decryption is all done in client-slide, only ciphertexts are transmitted via Sockets
-- File name is transmitted as plaintext but file blob is transmitted as ciphertext
+- File names and file contents are encrypted client-side; channel names, display names, timestamps, sizes and content types are not end-to-end encrypted.
 - Combined attachment size per message is limited to `25 MB`
 - Attachments use managed gzip compression before encryption when it reduces their size
 - Each new message uses a random 16-byte salt for PBKDF2. The salt and an HMAC key confirmation travel with the ciphertext in a versioned token; neither the password nor the derived key is transmitted. A short password is accepted without padding, but remains easier to guess.
@@ -19,9 +19,49 @@ Simple secure chat room web (+ file transfer) application using SignalR (dotnet 
 - Used [LiteDB](https://www.litedb.org/) to playback messages from 10 minutes ago to just joined users
 - [Fody.PropertyChanged](https://github.com/Fody/PropertyChanged) to detect if any of state's properties changes which triggers re-renders of UI
 
+### Opt-in channel push notifications
+
+After logging in, use **Enable notifications for this channel** to opt in on the current browser/device. Each channel has its own subscription and disable control. **Notify channel** sends a reminder to all subscribed devices for the sender's current channel (including the sender if subscribed). Normal messages, joins and calls do **not** trigger push notifications.
+
+Web Push uses a service worker, so the page does not need to remain open. Delivery is best-effort and depends on browser/OS permissions, connectivity, battery/background policies and notification settings; fully quitting or force-stopping the browser can prevent delivery. HTTPS is required outside localhost. On iPhone/iPad (iOS/iPadOS 16.4+), add the site to the Home Screen and enable notifications from that installed app.
+
+Reminders contain only the public channel name and generic text, never chat messages, attachments, passwords or encryption keys. Clicking one opens the login page with the channel preselected; it does not automatically log in or supply a password. An older session in the same tab/app does not override that channel-specific login link. Normal page reloads still restore the current session. The browser's push provider sees delivery metadata. The push payload is encrypted for the subscribed browser.
+
+#### Server configuration
+
+Generate a VAPID key pair **once**, in a trusted terminal:
+
+```powershell
+dotnet run --project API -- --generate-vapid-keys
+```
+
+For a built container, run `dotnet API.dll --generate-vapid-keys`. Store the output securely and configure these server environment variables (for example in Coolify):
+
+```text
+Push__PublicKey=<generated public key>
+Push__PrivateKey=<generated private key>
+Push__Subject=mailto:admin@example.com
+```
+
+Never commit the private key or put it in UI configuration. Keep the same keys across deployments; changing them requires re-enabling subscriptions in every channel on each device. All-empty configuration disables push controls; incomplete/invalid configuration is rejected. Deploy server and UI together. The manifest and service worker are served by the existing website; no extra inbound ports or third-party application account are needed.
+
+Subscriptions are stored in the existing LiteDB database. Persist the `DATABASE_PATH` file (the container defaults to `/app/data/db.litedb`) across deployments. This stores secret push endpoints, browser public encryption keys and hashed device-management tokens, but no chat passwords. Protect database files/backups. A random management token is kept in browser local storage; anyone with access to that storage can manage that device's subscriptions. Logout deliberately leaves subscriptions enabled. Disable each channel before clearing site data or using a shared device; clearing local storage loses the management token. If the browser's subscription becomes unusable, disable and re-enable the channel.
+
+Only joined SignalR clients can subscribe or send reminders, and the server always selects their joined channel. As with existing channel membership, joining is not authenticated proof of knowing its encryption password: anyone who joins a channel can click **Notify channel**. Reminders are limited to once per minute per channel, with up to 20 channels per device and 500 devices per channel. Expired endpoints (HTTP 404/410) are removed automatically; transient delivery failures are reported and retained for later attempts. A push-service acceptance count is not confirmation of delivery. Undelivered reminders expire after one hour.
+
+For server-side request safety, endpoints are limited to HTTPS on port 443 at the supported Chrome/FCM, Firefox/Mozilla, Apple and Windows push-service domains; redirects are not followed. Other push providers are rejected explicitly. The server needs outbound HTTPS access to those services.
+
+Validation: `dotnet run --project Tests\MessageHub.Tests` covers subscription storage, device isolation, channel membership, endpoint validation, rate limits and encrypted provider requests using a fake HTTP transport. `node --experimental-vm-modules --test UI\Tests\channel-push.test.cjs` covers browser opt-in and service-worker handling. Actual delivery requires configured VAPID keys and an opted-in supported browser.
+
 ### Self-hosted voice and video channel
 
 Encryption is mandatory for transmitted message/file contents and call media. Mobile presets, bandwidth adaptation, keyframe recovery, camera changes, and screen sharing never disable it. If encrypted media setup fails, the affected sender is not attached or its track is removed; browsers without encoded-transform support cannot join WebRTC calls. Encryption failures never fall back to plaintext or transport-only media.
+
+**Joining the bridge is enough to talk:** participants marked **In call** cannot be rung. Everyone in the channel sees bridge membership, even before joining; use **Join call** to connect to people already there. Ringing only invites someone who has not joined. Accepting stops the ringtone before signaling or media setup; independently joining with a pending invitation also clears that invitation on both ends. Late incoming-ring events cannot restart the ringtone while answering, joining or already in a call. This applies to Automatic WebRTC and Stealth audio, including legacy call transports.
+
+Call-health indicators use Havit `HxIcon` Bootstrap reception icons, with accessible status text and Bootstrap sizing/colors. Notification actions use Havit `HxButton` and its built-in icons. Browser permission and service-worker APIs use a small JavaScript interop module; server-side Web Push uses `Lib.Net.Http.WebPush`.
+
+The shared password and raw password-derived encryption keys stay in the browser. Chat text, file names and file contents use client-side AES-256-CTR; WebRTC encoded audio/video/screen-share payloads use AES-256-CTR, with necessary codec headers left readable. Stealth audio uses AES-256-GCM with authenticated headers and replay protection. Channel/user names, presence, call invitations, SDP/ICE signaling, public salts and key-confirmation values are not end-to-end encrypted; use HTTPS for the site and signaling. Key confirmations are not passwords or raw keys, but allow offline password guessing, so use a strong shared passphrase. The existing CTR formats are not authenticated encryption and retain the limitations described above; these calling fixes do not redesign them.
 
 #### Audio over HTTPS (Stealth mode)
 
@@ -38,6 +78,8 @@ Stealth mode prefers **browser-native WebCodecs Opus**, mono 48 kHz, targeting 2
 Camera, screen sharing, transcription, and WebRTC quality presets do not apply in Stealth mode. It requires a secure browser context, WebCrypto and AudioWorklet, but not WebRTC encoded transforms. Microphone capture starts only when another participant joins and stops when the last leaves. Native codec errors fail closed with an explicit message rather than silently sending another format or plaintext.
 
 Each sender derives a separate AES-256-GCM key using HKDF-SHA-256, the existing password-derived voice key, a random stream ID, and a Stealth-specific domain separator. Frames authenticate their codec/version headers and monotonic counters; wrong-password, modified and replayed frames are not played. Native Opus decoder metadata comes from the browser encoder and travels inside the encrypted payload. Shared media revisions discard in-flight audio from an obsolete transport or codec before playback. The server coordinates transport and codec capabilities but does not receive the password or decryption key. Audio uses dedicated, size/rate-bounded media relay calls and is **never stored in chat history**. Receive warnings identify unreadable encrypted audio. The call-health icon requires recent authenticated reception **and worklet playback**, not just incoming packets; green still does not prove speaker audibility or that the other person can hear you.
+
+Microphone permission results belong to the call/capture attempt that requested them. A late denial after leaving or rejoining is ignored rather than terminating the new call; a denial for the active attempt still reports an error and fails closed.
 
 **Debug mode** opens live call diagnostics, refreshed once per second. HTTPS diagnostics distinguish microphone permission/device errors, muted or silent capture, missing capture frames, encrypted client uploads, incoming frames, authentication failures, decoded frames, audio-context suspension and actual worklet playback. They include measured input/output peaks and queue drops, but no audio samples, passwords or keys. The last HTTPS session's diagnostics and failure stage remain available after cleanup until another call starts. **Resume audio** asks the browser to resume a suspended audio context. Client upload counts do not confirm server forwarding, and a device cannot distinguish remote capture failure from missing network delivery without the other side's diagnostics.
 

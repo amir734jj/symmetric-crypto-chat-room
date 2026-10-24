@@ -1,4 +1,5 @@
 ﻿using System;
+using System.Net.Http;
 using ByteSizeLib;
 using DomainLogic;
 using LiteDB;
@@ -7,6 +8,7 @@ using Microsoft.AspNetCore.Hosting;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
+using Lib.Net.Http.WebPush;
 
 namespace API;
 
@@ -65,6 +67,13 @@ public class Startup
             _configuration["DATABASE_PATH"] ?? "db.litedb"));
         services.AddSingleton<PlaybackLogic>();
         services.AddSingleton<TurnHealthChecker>();
+        services.Configure<PushOptions>(_configuration.GetSection("Push"));
+        services.AddSingleton(_ => new HttpClient(new HttpClientHandler { AllowAutoRedirect = false }));
+        services.AddSingleton(provider => new PushServiceClient(provider.GetRequiredService<HttpClient>())
+        {
+            AutoRetryAfter = false
+        });
+        services.AddSingleton<PushNotificationService>();
     }
 
     // This method gets called by the runtime. Use this method to configure the HTTP request pipeline.

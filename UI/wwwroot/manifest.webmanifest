@@ -1,0 +1,13 @@
+{
+  "id": "./",
+  "name": "Symmetric Crypto Chat Room",
+  "short_name": "Secure Chat",
+  "start_url": "./login",
+  "scope": "./",
+  "display": "standalone",
+  "background_color": "#ffffff",
+  "theme_color": "#0d6efd",
+  "icons": [
+    { "src": "chat-icon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any" }
+  ]
+}

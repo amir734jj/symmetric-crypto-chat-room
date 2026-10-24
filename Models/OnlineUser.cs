@@ -7,5 +7,7 @@ namespace Models
         public string Name { get; set; } = string.Empty;
 
         public bool HttpsAudio { get; set; }
+
+        public bool InVoice { get; set; }
     }
 }

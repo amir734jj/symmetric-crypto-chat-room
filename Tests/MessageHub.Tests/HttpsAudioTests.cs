@@ -24,7 +24,8 @@ internal static class HttpsAudioTests
             var client = DispatchProxy.Create<ITypedClient, ClientRecorder>();
             clients[id] = client;
             observers[id] = (ClientRecorder)(object)client;
-            return new MessageHub(playback, new TurnHealthChecker(), NullLogger<MessageHub>.Instance)
+            return new MessageHub(playback, new TurnHealthChecker(), NullLogger<MessageHub>.Instance,
+                PushTests.Disabled(database))
             {
                 Context = new TestContext(id),
                 Clients = new AudioClients(clients, status, id),

@@ -81,6 +81,9 @@
 </div>
 
 @code {
+    [SupplyParameterFromQuery(Name = "channel")]
+    public string? NotificationChannel { get; set; }
+
     readonly LoginViewModel _model = new();
     readonly List<SavedLogin> _savedLogins = [];
     readonly List<ChannelSummary> _channels = [];
@@ -90,6 +93,12 @@
     bool _channelsLoading = true;
 
     bool HasSelectedSavedLogin => FindSelectedSavedLogin() != null;
+
+    protected override void OnParametersSet()
+    {
+        if (!string.IsNullOrWhiteSpace(NotificationChannel) && NotificationChannel.Length <= 200)
+            _model.Channel = NotificationChannel;
+    }
 
     protected override async Task OnInitializedAsync()
     {

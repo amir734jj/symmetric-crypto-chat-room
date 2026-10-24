@@ -500,6 +500,25 @@ test("Late microphone permission after leave cannot retain a live track", async 
     assert.equal(stream.track.stopped, true);
 });
 
+test("A stale microphone denial after rejoining cannot fail the new call", async () => {
+    const h = audioHarness();
+    const audio = await h.load("https-audio.js");
+    let rejectCapture;
+    h.capture = () => new Promise((resolve, reject) => { rejectCapture = reject; });
+    await audio.initialize(h.reference, key);
+    const oldCapture = audio.setParticipants([{ connectionId: "old-peer" }]);
+    await audio.leave();
+    h.capture = () => h.makeStream();
+    await audio.initialize(h.reference, key);
+    await audio.setParticipants([{ connectionId: "new-peer" }]);
+    rejectCapture(new Error("Late permission denial"));
+    await oldCapture;
+    assert.equal(h.streams[0].track.stopped, false);
+    assert.equal(h.calls.some(call => call.method === "HttpsAudioFailed"), false);
+    await audio.leave();
+    assert.equal(h.streams[0].track.stopped, true);
+});
+
 test("Peers leaving and returning during microphone permission reconcile capture", async () => {
     const h = audioHarness();
     const audio = await h.load("https-audio.js");

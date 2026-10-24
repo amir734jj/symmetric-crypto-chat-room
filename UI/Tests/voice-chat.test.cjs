@@ -3,15 +3,25 @@ const { readFile } = require("node:fs/promises");
 const path = require("node:path");
 const { test } = require("node:test");
 const vm = require("node:vm");
-const { webcrypto } = require("node:crypto");
+const { webcrypto, pbkdf2Sync } = require("node:crypto");
 const { pathToFileURL } = require("node:url");
 
-test("call health icon stays compact even before the stylesheet loads", async () => {
+test("call health uses Havit icons, Bootstrap sizing and accessible status text", async () => {
     const markup = await readFile(path.join(__dirname, "..", "Components", "VoiceChannel.razor"), "utf8");
-    const icon = markup.match(/<svg\b[^>]*viewBox="0 0 14 12"[^>]*>/)?.[0];
-    assert.ok(icon, "Call health icon must be present");
-    assert.match(icon, /\bwidth="14"/);
-    assert.match(icon, /\bheight="12"/);
+    assert.match(markup, /<HxIcon Icon="@SignalHealthIcon" CssClass="fs-6"\s*\/>/);
+    assert.match(markup, /role="status"[^>]*title="@SignalHealthLabel"/);
+    assert.match(markup, /class="visually-hidden">@SignalHealthLabel/);
+    for (const [level, icon] of [["healthy", "Reception4"], ["fair", "Reception3"], ["poor", "Reception1"]]) {
+        assert.ok(markup.includes(`"${level}" => BootstrapIcon.${icon}`));
+    }
+    assert.ok(markup.includes("_ => BootstrapIcon.Reception0"));
+    assert.doesNotMatch(markup, /<svg\b|voice-signal-bar/);
+});
+
+test("Havit icons load from the generated scoped CSS bundle instead of the obsolete defaults placeholder", async () => {
+    const html = await readFile(path.join(__dirname, "..", "wwwroot", "index.html"), "utf8");
+    assert.match(html, /<link href="UI\.styles\.css" rel="stylesheet"\s*\/>/);
+    assert.doesNotMatch(html, /Havit\.Blazor\.Components\.Web\.Bootstrap\/defaults\.css/);
 });
 
 async function createHarness(options = {}) {
@@ -222,7 +232,7 @@ async function createHarness(options = {}) {
         await voice.initialize(
             reference, remoteContainer, createElement(),
             { username: "expiry:local", host: "localhost", credential: "test-credential", ...options.turnCredentials },
-            Buffer.alloc(32, 1).toString("base64"), quality, quality, options.automaticFallback ?? false);
+            options.voiceKey ?? Buffer.alloc(32, 1).toString("base64"), quality, quality, options.automaticFallback ?? false);
         if (withAudio) {
             streams[0].addTrack({
                 kind: "audio",
@@ -996,6 +1006,35 @@ test("a mismatched media offer connects with an unreadable indicator and no play
     h.voice.leave();
     assert.equal(tile.removed, true);
     assert.equal(audio.removed, true);
+});
+
+test("voice signaling carries key confirmation, never the password or raw symmetric media key", async () => {
+    const password = "local-only-test-passphrase";
+    const key = pbkdf2Sync(password, "test-only-voice-salt", 210000, 32, "sha256").toString("base64");
+    const h = await createHarness({ voiceKey: key });
+    await h.join(true);
+    await h.voice.connectToParticipants([{ connectionId: "outgoing", name: "Outgoing" }]);
+    const offer = JSON.parse(h.callbacks.find(([method]) => method === "SendVoiceOffer")[2]);
+    await h.voice.receiveOffer("incoming", "Incoming", JSON.stringify({
+        description: { type: "offer", sdp: "test" }, mediaKeyConfirmation: offer.mediaKeyConfirmation
+    }));
+    h.connections[0].onicecandidate({ candidate: { candidate: "test-candidate", sdpMid: "0" } });
+    const signaling = h.callbacks.filter(([method]) =>
+        ["SendVoiceOffer", "SendVoiceAnswer", "SendVoiceIceCandidate"].includes(method));
+    assert.equal(new Set(signaling.map(([method]) => method)).size, 3);
+    for (const [method, , payload] of signaling) {
+        assert.equal(payload.includes(password), false);
+        assert.equal(payload.includes(key), false);
+        if (method !== "SendVoiceIceCandidate") {
+            const description = JSON.parse(payload);
+            assert.deepEqual(Object.keys(description).sort(), ["description", "mediaKeyConfirmation"]);
+            assert.equal(Buffer.from(description.mediaKeyConfirmation, "base64").length, 32);
+            assert.notEqual(description.mediaKeyConfirmation, key);
+        }
+    }
+    assert.equal(h.connections[0].getSenders()[0].transform.options.key, key,
+        "The symmetric key belongs in the local encryption worker, not signaling");
+    h.voice.leave();
 });
 
 test("mixed-password answers leave matching peers readable and mismatched peers unreadable", async () => {

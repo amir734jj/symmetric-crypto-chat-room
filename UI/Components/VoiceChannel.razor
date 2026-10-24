@@ -13,12 +13,8 @@
             <strong>Voice &amp; video</strong>
             @if (_joined)
             {
-                <span class="voice-signal-health @SignalHealthCssClass" role="status" aria-live="polite" aria-atomic="true" title="@SignalHealthLabel">
-                    <svg width="14" height="12" viewBox="0 0 14 12" aria-hidden="true" focusable="false">
-                        <rect class="voice-signal-bar" x="1" y="8" width="3" height="4" rx="0.5" />
-                        <rect class="voice-signal-bar" x="5" y="4" width="3" height="8" rx="0.5" />
-                        <rect class="voice-signal-bar" x="9" y="0" width="3" height="12" rx="0.5" />
-                    </svg>
+                <span class="ms-1 align-middle @SignalHealthCssClass" role="status" aria-live="polite" aria-atomic="true" title="@SignalHealthLabel">
+                    <HxIcon Icon="@SignalHealthIcon" CssClass="fs-6" />
                     <span class="visually-hidden">@SignalHealthLabel</span>
                 </span>
                 <span class="ms-2 text-muted">@(_participantIds.Count + 1) connected</span>
@@ -219,6 +215,7 @@
 
     <div class="voice-presence mt-3">
         <strong>Online</strong>
+        <small class="text-muted d-block">People marked In call are already in the bridge. Join call to talk to them; no ring is needed.</small>
         @if (!OtherOnlineUsers.Any())
         {
             <span class="text-muted">No one else is online</span>
@@ -233,13 +230,16 @@
                     {
                         <span class="text-muted">Stealth audio</span>
                     }
-                    @if (_participantIds.Contains(user.ConnectionId))
+                    @if (user.InVoice || _participantIds.Contains(user.ConnectionId))
                     {
                         <span class="text-success">In call</span>
                     }
-                    <HxButton Size="ButtonSize.Small" Color="ThemeColor.Primary" Enabled="@(!_busy && _outgoingCallConnectionId == null)" OnClick="@(() => Ring(user))">
-                        Ring
-                    </HxButton>
+                    else
+                    {
+                        <HxButton Size="ButtonSize.Small" Color="ThemeColor.Primary" Enabled="@(!_busy && _outgoingCallConnectionId == null)" OnClick="@(() => Ring(user))">
+                            Ring
+                        </HxButton>
+                    }
                 </div>
             }
         }
@@ -374,6 +374,7 @@
     private bool _forceStealth;
     private bool _opusAudio;
     private bool _joiningAutomatic;
+    private bool _answeringCall;
     private bool _transitioning;
     private bool _fallbackPending;
     private long _voiceRevision;
@@ -446,10 +447,18 @@
 
     private string SignalHealthCssClass => _connectionHealth switch
     {
-        "healthy" => "voice-signal-healthy",
-        "fair" => "voice-signal-fair",
-        "poor" => "voice-signal-poor",
-        _ => "voice-signal-checking"
+        "healthy" => "text-success",
+        "fair" => "text-warning",
+        "poor" => "text-danger",
+        _ => "text-secondary"
+    };
+
+    private BootstrapIcon SignalHealthIcon => _connectionHealth switch
+    {
+        "healthy" => BootstrapIcon.Reception4,
+        "fair" => BootstrapIcon.Reception3,
+        "poor" => BootstrapIcon.Reception1,
+        _ => BootstrapIcon.Reception0
     };
 
     private string SignalHealthLabel => $"Call connection: {_connectionHealth}. {_connectionHealthDetail}";
@@ -573,6 +582,13 @@
     {
         return InvokeAsync(async () =>
         {
+            if (_outgoingCallConnectionId != null &&
+                State.OnlineUsers.Any(user => user.ConnectionId == _outgoingCallConnectionId && user.InVoice))
+            {
+                ClearOutgoingCall();
+                _callStatus = _joined ? "Connected in the bridge." : "Already in the call - join the bridge to talk.";
+            }
+            if (_joined && _incomingCallerConnectionId != null) await ClearIncomingCall();
             if (_joined && !_useHttpsAudio && _module != null)
             {
                 try
@@ -619,6 +635,7 @@
             var state = await SignalRStateManager.JoinAutomaticVoice(_voiceCapabilities);
             if (_disposed) { await SignalRStateManager.LeaveVoice(); return; }
             _joined = true;
+            await ClearIncomingCall();
             StartCallTimer();
             QueueVoiceState(state);
             await ApplyQueuedVoiceStates();
@@ -1009,6 +1026,11 @@
 
     private async Task Ring(OnlineUser user)
     {
+        if (user.InVoice || _participantIds.Contains(user.ConnectionId))
+        {
+            _callStatus = _joined ? "Connected in the bridge." : "Already in the call - join the bridge to talk.";
+            return;
+        }
         _callStatus = null;
         try
         {
@@ -1106,6 +1128,11 @@
     {
         return InvokeAsync(async () =>
         {
+            if (_joined || _joiningAutomatic || _answeringCall || _disposed)
+            {
+                Logger.LogTrace("Ignoring a stale incoming ring while joining or already in the call");
+                return;
+            }
             _incomingCallerConnectionId = callerConnectionId;
             _incomingCallerName = callerName;
             _callStatus = null;
@@ -1122,7 +1149,7 @@
 
             var callerName = _incomingCallerName;
             await ClearIncomingCall();
-            _callStatus = timedOut
+            _callStatus = _joined || _joiningAutomatic ? "Joined the call" : timedOut
                 ? callerName == null ? "Missed call" : $"Missed call from {callerName}"
                 : callerName == null ? "Incoming call cancelled" : $"{callerName} stopped ringing";
             StateHasChanged();
@@ -1146,26 +1173,27 @@
     private async Task AcceptCall()
     {
         var callerConnectionId = _incomingCallerConnectionId;
-        await ClearIncomingCall();
         if (callerConnectionId == null) return;
-
+        _answeringCall = true;
+        _busy = true;
         try
         {
+            await ClearIncomingCall();
             await SignalRStateManager.RespondVoiceCall(callerConnectionId, true);
+            _callStatus = "Call accepted - connecting...";
+            if (!_joined) await Join();
+            _callStatus = _joined ? "Call accepted" : "Unable to join the call";
         }
         catch (Exception exception)
         {
             _callStatus = "Call is no longer pending";
             _error = exception.Message;
-            return;
         }
-
-        _callStatus = "Call accepted - connecting...";
-        if (!_joined)
+        finally
         {
-            await Join();
+            _answeringCall = false;
+            _busy = false;
         }
-        _callStatus = _joined ? "Call accepted" : "Unable to join the call";
     }
 
     private async Task DeclineCall()
@@ -1190,7 +1218,8 @@
         var requestId = ++_ringtoneRequestId;
         var module = await (_ringtoneModuleTask ??= Js.InvokeAsync<IJSObjectReference>(
             "import", "./js/ringtone.js").AsTask());
-        if (requestId != _ringtoneRequestId || _incomingCallerConnectionId == null) return;
+        if (requestId != _ringtoneRequestId || _incomingCallerConnectionId == null ||
+            _joined || _joiningAutomatic || _answeringCall || _disposed) return;
         await module.InvokeVoidAsync("playRingtone", _ringtone);
     }
 

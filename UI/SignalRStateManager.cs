@@ -1,5 +1,6 @@
 using System.ComponentModel;
 using System.Security.Claims;
+using System.Web;
 using Blazored.SessionStorage;
 using CaseExtensions;
 using Microsoft.AspNetCore.Components;
@@ -113,7 +114,11 @@ public sealed class SignalRStateManager : AuthenticationStateProvider, IDisposab
             
             _state.StateEnum = SignalRStateEnum.Initialized;
 
-            if (_sessionStorageService.ContainKey(SESSION_KEY))
+            var location = _navigation.ToAbsoluteUri(_navigation.Uri);
+            var notificationChannel = HttpUtility.ParseQueryString(location.Query)["channel"];
+            var channelLogin = location.AbsolutePath.TrimEnd('/').EndsWith("/login", StringComparison.OrdinalIgnoreCase) &&
+                !string.IsNullOrWhiteSpace(notificationChannel) && notificationChannel.Length <= 200;
+            if (_sessionStorageService.ContainKey(SESSION_KEY) && !channelLogin)
             {
                 await Login(_sessionStorageService.GetItem<LoginViewModel>(SESSION_KEY));
                 
@@ -180,6 +185,13 @@ public sealed class SignalRStateManager : AuthenticationStateProvider, IDisposab
 
         NotifyAuthenticationStateChanged(GetAuthenticationStateAsync());
     }
+
+    public Task<string> GetPushPublicKey() => _server.GetPushPublicKey();
+    public Task<bool> HasChannelPush(string deviceToken) => _server.HasChannelPush(deviceToken);
+    public Task SubscribeChannelPush(string deviceToken, ChannelPushSubscription subscription) =>
+        _server.SubscribeChannelPush(deviceToken, subscription);
+    public Task UnsubscribeChannelPush(string deviceToken) => _server.UnsubscribeChannelPush(deviceToken);
+    public Task<ChannelPushResult> NotifyChannel() => _server.NotifyChannel();
 
     public async Task Send(MessagePayload messagePayload)
     {

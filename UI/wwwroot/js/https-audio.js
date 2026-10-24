@@ -257,6 +257,7 @@ export async function setParticipants(participants) {
         session.source = session.context.createMediaStreamSource(stream);
         session.source.connect(session.node);
     } catch (error) {
+        if (active !== session || session.captureVersion !== version || !session.peers.size) return;
         recordFailure(session, error, "microphone capture");
         throw error;
     } finally {

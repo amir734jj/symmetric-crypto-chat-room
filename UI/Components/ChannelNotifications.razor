@@ -1,0 +1,136 @@
+@inject SignalRStateManager SignalRStateManager
+@inject IJSRuntime JS
+@inject ILogger<ChannelNotifications> Logger
+@implements IAsyncDisposable
+
+<section class="my-3" aria-label="Channel push notifications">
+    <h5>Channel notifications</h5>
+    <p class="text-muted">
+        Opt in on this device to receive a reminder when someone clicks Notify channel, even after closing this tab.
+        Messages are not sent automatically. Notifications show the channel name, never chat content.
+        On iPhone/iPad, add this site to your Home Screen first.
+    </p>
+    <HxButton Color="ThemeColor.Primary" Outline="true" Size="ButtonSize.Small" CssClass="me-2"
+              Icon="@(_enabled ? BootstrapIcon.BellSlash : BootstrapIcon.Bell)"
+              Enabled="@(!_busy && _ready && _supported && (_configured || _enabled))" OnClick="Toggle">
+        @(_enabled ? "Disable notifications for this channel" : "Enable notifications for this channel")
+    </HxButton>
+    <HxButton Color="ThemeColor.Primary" Size="ButtonSize.Small" Icon="BootstrapIcon.Megaphone"
+              Enabled="@(!_busy && _ready && _configured)" OnClick="Notify">
+        Notify channel
+    </HxButton>
+    <div class="form-text">Subscriptions remain enabled after logout. Disable each channel here to stop reminders. At most one reminder per channel per minute.</div>
+    @if (!string.IsNullOrEmpty(_status))
+    {
+        <div class="mt-2" role="status">@_status</div>
+    }
+    @if (!string.IsNullOrEmpty(_error))
+    {
+        <div class="text-danger mt-2" role="alert">@_error</div>
+    }
+</section>
+
+@code {
+    IJSObjectReference? _module;
+    string _publicKey = "";
+    string _deviceToken = "";
+    string? _status;
+    string? _error;
+    bool _enabled, _supported, _configured, _ready, _busy;
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (!firstRender) return;
+        try
+        {
+            _publicKey = await SignalRStateManager.GetPushPublicKey();
+            _configured = !string.IsNullOrEmpty(_publicKey);
+            _module = await JS.InvokeAsync<IJSObjectReference>("import", "./js/channel-push.js");
+            var state = await _module.InvokeAsync<BrowserPushState>("getState");
+            _supported = state.Supported;
+            _deviceToken = state.DeviceToken;
+            if (_supported) _enabled = await SignalRStateManager.HasChannelPush(_deviceToken);
+            if (!_configured) _status = "Push notifications need VAPID configuration on the server.";
+            else if (!_supported) _status = "Web Push is unavailable here. Use HTTPS and a supported browser or installed Home Screen app.";
+            else if (_enabled && !state.Subscribed) _error = "This browser's push subscription is unavailable. Disable and re-enable this channel to repair it, and check browser permissions.";
+        }
+        catch (Exception ex)
+        {
+            Logger.LogError(ex, "Failed to load channel notification settings");
+            _error = "Could not load notification settings. Reload the page to try again.";
+        }
+        finally
+        {
+            _ready = true;
+            StateHasChanged();
+        }
+    }
+
+    async Task Toggle()
+    {
+        _busy = true;
+        _error = _status = null;
+        try
+        {
+            if (_enabled)
+            {
+                // Keep the browser endpoint alive: other channels may still use it.
+                await SignalRStateManager.UnsubscribeChannelPush(_deviceToken);
+                _enabled = false;
+                _status = "Notifications disabled for this channel on this device.";
+            }
+            else
+            {
+                var registration = await _module!.InvokeAsync<BrowserRegistration>("subscribe", _publicKey);
+                await SignalRStateManager.SubscribeChannelPush(registration.DeviceToken, registration.Subscription);
+                _deviceToken = registration.DeviceToken;
+                _enabled = true;
+                _status = "Notifications enabled for this channel on this device.";
+            }
+        }
+        catch (Exception ex)
+        {
+            Logger.LogError(ex, "Failed to change channel notification subscription");
+            _error = $"Could not change notifications: {ex.Message}";
+        }
+        finally { _busy = false; }
+    }
+
+    async Task Notify()
+    {
+        _busy = true;
+        _error = _status = null;
+        try
+        {
+            var result = await SignalRStateManager.NotifyChannel();
+            _status = result.Accepted + result.Failed + result.Expired == 0
+                ? "No devices are subscribed to this channel."
+                : $"Push service accepted: {result.Accepted}. Failed: {result.Failed}. Expired subscriptions removed: {result.Expired}. Acceptance does not confirm device delivery.";
+            if (result.Failed > 0) _error = "Some notifications failed. Check the server push configuration and network connectivity.";
+        }
+        catch (Exception ex)
+        {
+            Logger.LogError(ex, "Failed to notify channel");
+            _error = $"Could not notify channel: {ex.Message}";
+        }
+        finally { _busy = false; }
+    }
+
+    public async ValueTask DisposeAsync()
+    {
+        if (_module != null) await _module.DisposeAsync();
+    }
+
+    sealed class BrowserPushState
+    {
+        public bool Supported { get; set; }
+        public bool Subscribed { get; set; }
+        public string DeviceToken { get; set; } = "";
+    }
+
+    sealed class BrowserRegistration
+    {
+        public string DeviceToken { get; set; } = "";
+        public ChannelPushSubscription Subscription { get; set; } = new();
+    }
+}

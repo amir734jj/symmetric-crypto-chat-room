@@ -8,6 +8,8 @@ using Models;
 using Models.Hub;
 
 await HttpsAudioTests.Run();
+await PushTests.Run();
+await RingingTests.Run();
 
 using var database = new LiteDatabase(new MemoryStream());
 using var playback = new PlaybackLogic(database);
@@ -35,6 +37,8 @@ try
     await first.RingVoice("second");
     Check((string)recorder.Calls.Last(call => call.Method == "VoiceCallReceived").Args[0]! == "first",
         "Online users must be able to ring each other before either joins the bridge");
+    Check((string)recorder.Calls.Last(call => call.Method == "VoiceCallReceived").Args[1]! == firstName,
+        "Incoming calls should identify the caller's session");
     await second.RespondVoiceCall("first", true);
     Check((bool)recorder.Calls.Last(call => call.Method == "VoiceCallResponded").Args[2]!,
         "An invitation must be accepted without requiring existing bridge membership");
@@ -42,10 +46,9 @@ try
         "Sending a ring must not automatically join the sender to the bridge");
     Check((await second.JoinVoice()).Count == 0,
         "Accepting users should join the bridge independently of the unjoined sender");
-    await first.RingVoice("second");
-    await second.RespondVoiceCall("first", true);
+    await Reject(() => first.RingVoice("second"), "An already-joined user must not be rung");
     await Reject(() => first.SendVoiceOffer("second", "offer"),
-        "Ringing an already-joined user must not join the sender to the bridge");
+        "A rejected ring must not join the sender to the bridge");
     await second.RingVoice("first");
     await first.RespondVoiceCall("second", false);
     await second.LeaveVoice();
@@ -53,19 +56,18 @@ try
     Check((await first.JoinVoice()).Count == 0, "First participant should join alone");
     await first.RingVoice("second");
     await second.RespondVoiceCall("first", true);
-    var peers = await second.JoinVoice();
-    Check(peers.Single().ConnectionId == "first" && peers[0].Name == firstName,
-        "An unjoined invitee should discover the sender when joining the bridge");
-    await first.RingVoice("second");
-    Check((string)recorder.Calls.Last(call => call.Method == "VoiceCallReceived").Args[1]! == firstName,
-        "Incoming calls should identify the caller's session");
-    await second.RespondVoiceCall("first", true);
     var accepted = recorder.Calls.Last(call => call.Method == "VoiceCallResponded");
     Check((string)accepted.Args[1]! == secondName && (bool)accepted.Args[2]!,
         "Call responses should identify the responder's session");
+    var peers = await second.JoinVoice();
+    Check(peers.Single().ConnectionId == "first" && peers[0].Name == firstName,
+        "An unjoined invitee should discover the sender when joining the bridge");
+    await Reject(() => first.RingVoice("second"), "Connected peers must not ring each other");
+    await Reject(() => second.RingVoice("first"), "Connected peers must not ring in either direction");
     Check((await first.JoinVoice()).Single().ConnectionId == "second" &&
         (await second.JoinVoice()).Single().ConnectionId == "first",
-        "Ringing and answering already-connected participants must preserve their call memberships");
+        "Rejected rings must preserve existing call memberships");
+    await second.LeaveVoice();
     await first.RingVoice("second");
     await Reject(() => first.RingVoice("second"), "An already-pending incoming call must still be rejected");
     await first.CancelVoiceCall("second", true);
@@ -78,6 +80,7 @@ try
     var declined = recorder.Calls.Last(call => call.Method == "VoiceCallResponded");
     Check((string)declined.Args[1]! == secondName && !(bool)declined.Args[2]!,
         "Same-name participants must be able to decline a call");
+    await second.JoinVoice();
     await first.SendVoiceOffer("second", "offer");
     await second.SendVoiceAnswer("first", "answer");
     await first.SendVoiceIceCandidate("second", "candidate");
@@ -114,6 +117,7 @@ try
     await Reject(() => first.SendVoiceOffer("second", "offer"), "A participant outside voice must not signal");
     Check((await first.JoinVoice()).Single().ConnectionId == "second", "Rejoining voice must rediscover matching names");
 
+    await first.LeaveVoice();
     await second.RingVoice("first");
     await replacement.Rejoin(channel, "Amir", "first-device");
     var disconnected = recorder.Calls.Last(call => call.Method == "VoiceCallResponded");
@@ -138,7 +142,7 @@ finally
 }
 
 MessageHub CreateHub(string id) => new(playback, new TurnHealthChecker(),
-    Microsoft.Extensions.Logging.Abstractions.NullLogger<MessageHub>.Instance)
+    Microsoft.Extensions.Logging.Abstractions.NullLogger<MessageHub>.Instance, PushTests.Disabled(database))
 {
     Context = new TestContext(id),
     Clients = new TestClients(client),

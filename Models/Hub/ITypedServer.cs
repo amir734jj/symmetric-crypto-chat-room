@@ -15,6 +15,16 @@ namespace Models.Hub
 
         Task<List<ChannelSummary>> GetChannels();
 
+        Task<string> GetPushPublicKey();
+
+        Task<bool> HasChannelPush(string deviceToken);
+
+        Task SubscribeChannelPush(string deviceToken, ChannelPushSubscription subscription);
+
+        Task UnsubscribeChannelPush(string deviceToken);
+
+        Task<ChannelPushResult> NotifyChannel();
+
         Task<List<VoiceParticipant>> JoinVoice();
 
         Task<List<VoiceParticipant>> JoinHttpsAudioVoice();

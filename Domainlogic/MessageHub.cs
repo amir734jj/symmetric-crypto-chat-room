@@ -21,6 +21,7 @@ namespace DomainLogic
         private readonly TurnHealthChecker _turnHealthChecker;
 
         private readonly ILogger<MessageHub> _logger;
+        private readonly PushNotificationService _push;
 
         private static readonly ConcurrentDictionary<string, (string Channel, string Name, string ClientInstanceId, long JoinedOrder)> Users = new();
 
@@ -41,11 +42,13 @@ namespace DomainLogic
 
         private static readonly ConcurrentDictionary<string, string> PendingVoiceCalls = new();
 
-        public MessageHub(PlaybackLogic playbackLogic, TurnHealthChecker turnHealthChecker, ILogger<MessageHub> logger)
+        public MessageHub(PlaybackLogic playbackLogic, TurnHealthChecker turnHealthChecker, ILogger<MessageHub> logger,
+            PushNotificationService push)
         {
             _playbackLogic = playbackLogic;
             _turnHealthChecker = turnHealthChecker;
             _logger = logger;
+            _push = push;
         }
         
         public override Task OnConnectedAsync()
@@ -140,6 +143,29 @@ namespace DomainLogic
             return Task.FromResult(channels);
         }
 
+        public Task<string> GetPushPublicKey()
+        {
+            GetCurrentUser();
+            return Task.FromResult(_push.PublicKey);
+        }
+
+        public Task<bool> HasChannelPush(string deviceToken) =>
+            Task.FromResult(_push.HasSubscription(GetCurrentUser().Channel, deviceToken));
+
+        public Task SubscribeChannelPush(string deviceToken, ChannelPushSubscription subscription)
+        {
+            _push.Subscribe(GetCurrentUser().Channel, deviceToken, subscription);
+            return Task.CompletedTask;
+        }
+
+        public Task UnsubscribeChannelPush(string deviceToken)
+        {
+            _push.Unsubscribe(GetCurrentUser().Channel, deviceToken);
+            return Task.CompletedTask;
+        }
+
+        public Task<ChannelPushResult> NotifyChannel() => _push.Notify(GetCurrentUser().Channel);
+
         private async Task RemoveConnection(string connectionId)
         {
             if (!Users.TryRemove(connectionId, out var userInfo))
@@ -181,7 +207,9 @@ namespace DomainLogic
         {
             var userInfo = GetCurrentUser();
             JoinVoiceTransport(0);
+            await CompleteIncomingCallOnVoiceJoin();
             await NotifyAutomaticCall(userInfo.Channel);
+            await NotifyAll(userInfo.Channel, MessageTypeEnum.Joined);
             return GetVoiceParticipants(userInfo.Channel, Context.ConnectionId, 0);
         }
 
@@ -189,6 +217,7 @@ namespace DomainLogic
         {
             var userInfo = GetCurrentUser();
             JoinVoiceTransport(1);
+            await CompleteIncomingCallOnVoiceJoin();
             await NotifyHttpsAudioParticipants(userInfo.Channel);
             await NotifyAll(userInfo.Channel, MessageTypeEnum.Joined);
             return GetVoiceParticipants(userInfo.Channel, Context.ConnectionId, 1);
@@ -306,6 +335,7 @@ namespace DomainLogic
                 SetAutomaticTransport(user.Channel, https);
                 result = AutomaticSnapshot(user.Channel, Context.ConnectionId);
             }
+            await CompleteIncomingCallOnVoiceJoin();
             await NotifyAutomaticCall(user.Channel);
             await NotifyAll(user.Channel, MessageTypeEnum.Joined);
             return result;
@@ -479,9 +509,12 @@ namespace DomainLogic
                 throw new HubException("Cannot ring the current user");
             }
 
-            if (!PendingVoiceCalls.TryAdd(targetConnectionId, Context.ConnectionId))
+            lock (VoiceGate)
             {
-                throw new HubException("User already has an incoming call");
+                if (VoiceUsers.ContainsKey(targetConnectionId))
+                    throw new HubException("User is already in the call. Join the bridge to talk to them.");
+                if (!PendingVoiceCalls.TryAdd(targetConnectionId, Context.ConnectionId))
+                    throw new HubException("User already has an incoming call");
             }
 
             try
@@ -521,6 +554,15 @@ namespace DomainLogic
                 .VoiceCallResponded(Context.ConnectionId, GetDisplayName(responder), accepted);
         }
 
+        private async Task CompleteIncomingCallOnVoiceJoin()
+        {
+            if (!PendingVoiceCalls.TryRemove(Context.ConnectionId, out var callerConnectionId)) return;
+            var user = GetCurrentUser();
+            await Clients.Client(Context.ConnectionId).VoiceCallCancelled(callerConnectionId, false);
+            await Clients.Client(callerConnectionId)
+                .VoiceCallResponded(Context.ConnectionId, GetDisplayName(user), true);
+        }
+
         public async Task LeaveVoice()
         {
             var userInfo = GetCurrentUser();
@@ -532,10 +574,10 @@ namespace DomainLogic
                 if (transport == 1)
                 {
                     await NotifyHttpsAudioParticipants(userInfo.Channel);
-                    await NotifyAll(userInfo.Channel, MessageTypeEnum.Left);
                 }
             }
             await RemoveAutomaticVoice(Context.ConnectionId, userInfo.Channel, wasInVoice);
+            if (wasInVoice) await NotifyAll(userInfo.Channel, MessageTypeEnum.Left);
         }
 
         public Task SendVoiceOffer(string targetConnectionId, string offer)
@@ -626,6 +668,7 @@ namespace DomainLogic
                 {
                     ConnectionId = x.Key,
                     Name = GetDisplayName(x.Value),
+                    InVoice = VoiceUsers.ContainsKey(x.Key),
                     HttpsAudio = VoiceUsers.TryGetValue(x.Key, out var transport) && transport == 1
                 })
                 .ToList();
