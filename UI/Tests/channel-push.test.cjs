@@ -5,6 +5,15 @@ const { test } = require("node:test");
 const vm = require("node:vm");
 const { webcrypto } = require("node:crypto");
 
+test("notification actions wrap with spacing and keep long labels within narrow screens", async () => {
+    const source = await readFile(path.join(__dirname, "..", "Components", "ChannelNotifications.razor"), "utf8");
+    const actions = source.match(/<div class="d-flex flex-wrap gap-2">([\s\S]*?)<\/div>/);
+    assert.ok(actions, "Notification actions need a wrapping container with horizontal and vertical gaps");
+    assert.equal((actions[1].match(/<HxButton\b/g) || []).length, 2);
+    assert.equal((actions[1].match(/CssClass="mw-100 text-wrap"/g) || []).length, 2,
+        "Both Havit buttons must fit the container and allow their labels to wrap");
+});
+
 async function harness({ permission = "granted", secure = true } = {}) {
     const storage = new Map();
     const calls = [];

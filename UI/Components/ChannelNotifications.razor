@@ -10,15 +10,17 @@
         Messages are not sent automatically. Notifications show the channel name, never chat content.
         On iPhone/iPad, add this site to your Home Screen first.
     </p>
-    <HxButton Color="ThemeColor.Primary" Outline="true" Size="ButtonSize.Small" CssClass="me-2"
-              Icon="@(_enabled ? BootstrapIcon.BellSlash : BootstrapIcon.Bell)"
-              Enabled="@(!_busy && _ready && _supported && (_configured || _enabled))" OnClick="Toggle">
-        @(_enabled ? "Disable notifications for this channel" : "Enable notifications for this channel")
-    </HxButton>
-    <HxButton Color="ThemeColor.Primary" Size="ButtonSize.Small" Icon="BootstrapIcon.Megaphone"
-              Enabled="@(!_busy && _ready && _configured)" OnClick="Notify">
-        Notify channel
-    </HxButton>
+    <div class="d-flex flex-wrap gap-2">
+        <HxButton Color="ThemeColor.Primary" Outline="true" Size="ButtonSize.Small" CssClass="mw-100 text-wrap"
+                  Icon="@(_enabled ? BootstrapIcon.BellSlash : BootstrapIcon.Bell)"
+                  Enabled="@(!_busy && _ready && _supported && (_configured || _enabled))" OnClick="Toggle">
+            @(_enabled ? "Disable notifications for this channel" : "Enable notifications for this channel")
+        </HxButton>
+        <HxButton Color="ThemeColor.Primary" Size="ButtonSize.Small" CssClass="mw-100 text-wrap" Icon="BootstrapIcon.Megaphone"
+                  Enabled="@(!_busy && _ready && _configured)" OnClick="Notify">
+            Notify channel
+        </HxButton>
+    </div>
     <div class="form-text">Subscriptions remain enabled after logout. Disable each channel here to stop reminders. At most one reminder per channel per minute.</div>
     @if (!string.IsNullOrEmpty(_status))
     {
