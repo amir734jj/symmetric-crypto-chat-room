@@ -189,6 +189,7 @@ public sealed class SignalRStateManager : AuthenticationStateProvider, IDisposab
         NotifyAuthenticationStateChanged(GetAuthenticationStateAsync());
     }
 
+    public Task<int> GetMessageRetentionMinutes() => _server.GetMessageRetentionMinutes();
     public Task<string> GetPushPublicKey() => _server.GetPushPublicKey();
     public async Task<bool> HasChannelPush(string deviceToken) =>
         await _server.HasChannelPush(deviceToken, await GetPushScope());

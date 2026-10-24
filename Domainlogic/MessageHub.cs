@@ -143,6 +143,8 @@ namespace DomainLogic
             return Task.FromResult(channels);
         }
 
+        public Task<int> GetMessageRetentionMinutes() => Task.FromResult(_playbackLogic.RetentionMinutes);
+
         public Task<string> GetPushPublicKey()
         {
             GetCurrentUser();

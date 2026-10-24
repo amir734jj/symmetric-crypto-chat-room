@@ -1,5 +1,8 @@
 import { getNetworkConnection, isMobileDevice } from "./media-defaults.js";
 import { createIceConfiguration } from "./turn-diagnostics.js";
+import { createScreenWakeLock, supportsMobileScreenWakeLock } from "./screen-wake-lock.js";
+
+export { supportsMobileScreenWakeLock };
 
 let dotNetReference;
 let remoteMediaContainer;
@@ -31,9 +34,7 @@ let adaptationInProgress = false;
 let lastConnectionHealth;
 let automaticFallback = false;
 let fallbackRequested = false;
-let screenWakeLock;
-let wakeLockRequestId = 0;
-let keepScreenOn = false;
+const screenWakeLock = createScreenWakeLock(() => localStream);
 let selectedAudioOutputId = "";
 let audioOutputMode = "auto";
 let proximitySensor;
@@ -89,8 +90,6 @@ export async function initialize(
     peerConfiguration = createIceConfiguration(turnCredentials);
 
     localStream = new MediaStream();
-    document.removeEventListener("visibilitychange", handleVisibilityChange);
-    document.addEventListener("visibilitychange", handleVisibilityChange);
     getNetworkConnection()?.removeEventListener?.("change", handleNetworkConnectionChange);
     getNetworkConnection()?.addEventListener?.("change", handleNetworkConnectionChange);
     startQualityAdaptation();
@@ -226,18 +225,8 @@ export function supportsScreenSharing() {
     return typeof navigator.mediaDevices?.getDisplayMedia === "function";
 }
 
-export function supportsMobileScreenWakeLock() {
-    return isMobileDevice() && "wakeLock" in navigator;
-}
-
 export async function setKeepScreenOn(enabled) {
-    keepScreenOn = Boolean(enabled) && supportsMobileScreenWakeLock();
-    if (!keepScreenOn) {
-        releaseScreenWakeLock();
-        return false;
-    }
-
-    return await requestScreenWakeLock();
+    return await screenWakeLock.setEnabled(enabled);
 }
 
 async function ensureLocalAudio() {
@@ -756,7 +745,7 @@ export async function getConnectionDiagnostics() {
         },
         mobileCallSupport: {
             screenWakeLockSupported: "wakeLock" in navigator,
-            screenWakeLockActive: Boolean(screenWakeLock && !screenWakeLock.released),
+            screenWakeLockActive: screenWakeLock.active,
             communicationAudioSession: navigator.audioSession?.type ?? "unsupported",
             proximitySensorSupported: "ProximitySensor" in window,
             proximitySensorActive: Boolean(proximitySensor?.activated),
@@ -913,10 +902,8 @@ export function leave() {
     poorNetworkSamples = 0;
     goodVideoNetworkSamples = 0;
     poorVideoNetworkSamples = 0;
-    document.removeEventListener("visibilitychange", handleVisibilityChange);
     getNetworkConnection()?.removeEventListener?.("change", handleNetworkConnectionChange);
-    keepScreenOn = false;
-    releaseScreenWakeLock();
+    screenWakeLock.release();
     stopProximityRouting();
     setAudioSessionType("auto");
 
@@ -956,45 +943,6 @@ export function leave() {
     liveDataRateSamples.clear();
     encryptionWorker?.terminate();
     encryptionWorker = undefined;
-}
-
-async function requestScreenWakeLock() {
-    if (!keepScreenOn || !supportsMobileScreenWakeLock() || !localStream ||
-        document.visibilityState !== "visible") return false;
-    if (screenWakeLock && !screenWakeLock.released) return true;
-
-    const requestId = ++wakeLockRequestId;
-    const requestedStream = localStream;
-    try {
-        const requestedLock = await navigator.wakeLock.request("screen");
-        if (requestId !== wakeLockRequestId || !keepScreenOn ||
-            localStream !== requestedStream || document.visibilityState !== "visible") {
-            await requestedLock.release();
-            return false;
-        }
-        screenWakeLock = requestedLock;
-        requestedLock.addEventListener("release", () => {
-            if (screenWakeLock === requestedLock) screenWakeLock = undefined;
-        }, { once: true });
-        return true;
-    } catch (error) {
-        console.warn("Unable to keep the screen awake during the voice call", error);
-        if (requestId === wakeLockRequestId) keepScreenOn = false;
-        return false;
-    }
-}
-
-function releaseScreenWakeLock() {
-    wakeLockRequestId++;
-    const activeWakeLock = screenWakeLock;
-    screenWakeLock = undefined;
-    activeWakeLock?.release().catch(() => {});
-}
-
-function handleVisibilityChange() {
-    if (keepScreenOn && document.visibilityState === "visible" && localStream && !screenWakeLock) {
-        requestScreenWakeLock();
-    }
 }
 
 function setAudioSessionType(type) {

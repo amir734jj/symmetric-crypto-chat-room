@@ -15,8 +15,12 @@ public sealed class PlaybackLogic : IDisposable
         
     private readonly CancellationTokenSource _cleanupTaskCancellationToken;
 
-    public PlaybackLogic(ILiteDatabase db)
+    public int RetentionMinutes { get; }
+
+    public PlaybackLogic(ILiteDatabase db, int retentionMinutes = ChatConstants.DefaultMessageRetentionMinutes)
     {
+        if (retentionMinutes <= 0) throw new ArgumentOutOfRangeException(nameof(retentionMinutes));
+        RetentionMinutes = retentionMinutes;
         _collection = db.GetCollection<MessagePayload>();
 
         _cleanupTaskCancellationToken = new CancellationTokenSource();
@@ -28,7 +32,8 @@ public sealed class PlaybackLogic : IDisposable
     {
         while (!_cleanupTaskCancellationToken.IsCancellationRequested)
         {
-            foreach (var messagePayload in _collection.FindAll().ToList().Where(messagePayload => (DateTimeOffset.Now - messagePayload.Expiration).TotalSeconds > 0))
+            var now = DateTimeOffset.UtcNow;
+            foreach (var messagePayload in _collection.FindAll().ToList().Where(messagePayload => messagePayload.Expiration <= now))
             {
                 _collection.Delete(messagePayload.Id);
             }
@@ -39,12 +44,13 @@ public sealed class PlaybackLogic : IDisposable
 
     public IEnumerable<MessagePayload> GetMessages(string channel)
     {
-        return _collection.Find(x => x.Channel == channel).ToList();
+        var now = DateTimeOffset.UtcNow;
+        return _collection.Find(x => x.Channel == channel).Where(message => message.Expiration > now).ToList();
     }
 
     public void RecordMessage(MessagePayload message)
     {
-        message.Expiration = DateTimeOffset.Now.AddMinutes(ChatConstants.MessageRetentionMinutes);
+        message.Expiration = DateTimeOffset.UtcNow.AddMinutes(RetentionMinutes);
             
         _collection.Insert(message);
     }

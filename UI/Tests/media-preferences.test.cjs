@@ -69,7 +69,7 @@ test("Blazor restores the preference before joining, saves toggle changes, and d
     assert.match(markup, /OnAfterRenderAsync[\s\S]*?await EnsureStealthPreference\(\);/);
     const join = markup.slice(markup.indexOf("private async Task Join()"), markup.indexOf("private async Task<IJSObjectReference> InitializeWebRtc"));
     assert.ok(join.indexOf("await EnsureStealthPreference();") >= 0);
-    assert.ok(join.indexOf("await EnsureStealthPreference();") < join.indexOf("_voiceCapabilities.ForceStealth = _forceStealth"));
+    assert.ok(join.indexOf("await EnsureStealthPreference();") < join.indexOf("_voiceCapabilities.ForceStealth = _forceStealth || _stealthForVisit"));
     assert.match(markup, /InvokeAsync<bool>\("getForceStealthPreference"\)/);
     assert.match(markup, /InvokeVoidAsync\("setForceStealthPreference", _forceStealth\)/);
     assert.equal((markup.match(/"import", CallAssetsPath \+ "media-defaults\.js"/g) || []).length, 3,

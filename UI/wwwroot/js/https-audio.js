@@ -2,11 +2,17 @@ import { AudioFrameError, createAudioCipher } from "./https-audio-crypto.js";
 import { audioSampleRate } from "./https-audio-codec.js";
 import { getCapabilities, opusSampleRate, opusFrameSamples, opusFrameDuration,
     opusEncoderConfig, opusDecoderConfig, packOpusChunk, unpackOpusPacket } from "./https-audio-opus.js";
+import { createScreenWakeLock, supportsMobileScreenWakeLock } from "./screen-wake-lock.js";
 
-export { getCapabilities };
+export { getCapabilities, supportsMobileScreenWakeLock };
 
 let active;
 let lastDiagnostics;
+const screenWakeLock = createScreenWakeLock(() => active);
+
+export async function setKeepScreenOn(enabled) {
+    return await screenWakeLock.setEnabled(enabled);
+}
 
 function recordFailure(session, error, stage) {
     session.lastError = { stage, name: error.name, message: error.message };
@@ -425,6 +431,7 @@ function diagnostics(session) {
         active: active === session, snapshot: active === session ? "live" : "last state before cleanup",
         transport: "SignalR (WebSocket or HTTP fallback)", audioOnly: true,
         encrypted: active === session && Boolean(session.cipher), mediaRevision: session.mediaRevision,
+        screenWakeLockSupported: "wakeLock" in navigator, screenWakeLockActive: screenWakeLock.active,
         diagnosis: diagnosticMessages(session), lastError: session.lastError ?? null,
         codec: session.opus ? "Native Opus, 48 kHz mono, 24 kbps" : "Compatibility G.711 mu-law, 8 kHz mono, 64 kbps",
         peers: session.peers.size, audioContext: session.context?.state ?? "not initialized",
@@ -461,6 +468,7 @@ export async function leave() {
     const session = active;
     if (!session) return;
     active = undefined;
+    screenWakeLock.release();
     lastDiagnostics = diagnostics(session);
     clearInterval(session.timer);
     stopCapture(session);

@@ -7,6 +7,7 @@ using Microsoft.AspNetCore.SignalR;
 using Models;
 using Models.Hub;
 
+await PlaybackTests.Run();
 await HttpsAudioTests.Run();
 await PushTests.Run();
 await RingingTests.Run();

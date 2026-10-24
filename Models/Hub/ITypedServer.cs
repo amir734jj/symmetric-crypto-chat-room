@@ -15,6 +15,8 @@ namespace Models.Hub
 
         Task<List<ChannelSummary>> GetChannels();
 
+        Task<int> GetMessageRetentionMinutes();
+
         Task<string> GetPushPublicKey();
 
         Task<bool> HasChannelPush(string deviceToken, string passwordScope);

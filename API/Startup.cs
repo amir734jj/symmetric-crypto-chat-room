@@ -9,6 +9,7 @@ using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Lib.Net.Http.WebPush;
+using Models.Constants;
 
 namespace API;
 
@@ -63,9 +64,15 @@ public class Startup
             c.EnableDetailedErrors = true;
         });
 
+        var messageRetentionMinutes = _configuration.GetValue<int>(
+            "MESSAGE_RETENTION_MINUTES", ChatConstants.DefaultMessageRetentionMinutes);
+        if (messageRetentionMinutes <= 0)
+            throw new InvalidOperationException("MESSAGE_RETENTION_MINUTES must be a positive whole number.");
+
         services.AddSingleton<ILiteDatabase>(new LiteDatabase(
             _configuration["DATABASE_PATH"] ?? "db.litedb"));
-        services.AddSingleton<PlaybackLogic>();
+        services.AddSingleton(provider => new PlaybackLogic(
+            provider.GetRequiredService<ILiteDatabase>(), messageRetentionMinutes));
         services.AddSingleton<TurnHealthChecker>();
         services.Configure<PushOptions>(_configuration.GetSection("Push"));
         services.AddSingleton(_ => new HttpClient(new HttpClientHandler { AllowAutoRedirect = false }));

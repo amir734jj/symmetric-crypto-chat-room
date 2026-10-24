@@ -242,6 +242,130 @@ test("Variable-sized Opus frames authenticate codec, payload and replay counter"
     await assert.rejects(createAudioCipher(key, true, -1), /revision/);
 });
 
+function wakeHarness({ mobile = true, supported = true, request, logger = console } = {}) {
+    const listeners = new Map();
+    const locks = [];
+    const document = {
+        visibilityState: "visible",
+        addEventListener: (name, handler) => listeners.set(name, handler),
+        removeEventListener: name => listeners.delete(name)
+    };
+    function newLock() {
+        const handlers = new Map();
+        const lock = {
+            released: false,
+            addEventListener: (name, handler) => handlers.set(name, handler),
+            async release() { this.released = true; handlers.get("release")?.(); }
+        };
+        locks.push(lock);
+        return lock;
+    }
+    const h = audioHarness({
+        document, console: logger,
+        navigator: {
+            userAgent: mobile ? "Android" : "Windows NT",
+            ...(supported ? { wakeLock: { request: request ?? (async type => {
+                assert.equal(type, "screen");
+                return newLock();
+            }) } } : {})
+        }
+    });
+    return {
+        ...h, locks, listeners, newLock,
+        async visibilityChanged(value) {
+            document.visibilityState = value;
+            listeners.get("visibilitychange")?.();
+            await new Promise(setImmediate);
+        }
+    };
+}
+
+test("Stealth mobile wake lock works without microphone capture and is reacquired, disabled and released", async () => {
+    const h = wakeHarness();
+    const audio = await h.load("https-audio.js");
+    assert.equal(audio.supportsMobileScreenWakeLock(), true);
+    assert.equal(await audio.setKeepScreenOn(true), false, "A wake lock requires an active call");
+    assert.equal(h.listeners.size, 0);
+    await audio.initialize(h.reference, key);
+    assert.equal(await audio.setKeepScreenOn(true), true);
+    assert.equal(JSON.parse(audio.getConnectionDiagnostics()).screenWakeLockActive, true);
+    assert.equal(h.requests.length, 0, "Waiting alone must not request microphone capture");
+    await h.visibilityChanged("hidden");
+    await h.locks[0].release();
+    await h.visibilityChanged("visible");
+    assert.equal(h.locks.length, 2);
+    assert.equal(await audio.setKeepScreenOn(false), false);
+    assert.equal(h.locks[1].released, true);
+    assert.equal(h.listeners.size, 0);
+    assert.equal(await audio.setKeepScreenOn(true), true);
+    await audio.leave();
+    assert.equal(h.locks[2].released, true);
+    assert.equal(h.listeners.size, 0);
+    assert.equal(JSON.parse(audio.getConnectionDiagnostics()).screenWakeLockActive, false);
+});
+
+for (const options of [{ mobile: false }, { supported: false }]) {
+    test(`Stealth does not acquire a wake lock when mobile=${options.mobile ?? true}, supported=${options.supported ?? true}`, async () => {
+        const h = wakeHarness(options);
+        const audio = await h.load("https-audio.js");
+        await audio.initialize(h.reference, key);
+        assert.equal(audio.supportsMobileScreenWakeLock(), false);
+        assert.equal(await audio.setKeepScreenOn(true), false);
+        assert.equal(h.locks.length, 0);
+        assert.equal(h.listeners.size, 0);
+        await audio.leave();
+    });
+}
+
+for (const action of ["disable", "leave", "rejoin"]) {
+    test(`Stealth releases a delayed wake lock after ${action}`, async () => {
+        let resolve;
+        const pending = new Promise(complete => { resolve = complete; });
+        const h = wakeHarness({ request: () => pending });
+        const audio = await h.load("https-audio.js");
+        await audio.initialize(h.reference, key);
+        const starting = audio.setKeepScreenOn(true);
+        if (action === "disable") await audio.setKeepScreenOn(false);
+        else await audio.leave();
+        if (action === "rejoin") await audio.initialize(h.reference, key);
+        const lock = h.newLock();
+        resolve(lock);
+        assert.equal(await starting, false);
+        assert.equal(lock.released, true);
+        assert.equal(h.listeners.size, 0);
+        await audio.leave();
+    });
+}
+
+test("Stealth wake-lock denial is reported without ending the encrypted call", async () => {
+    const warnings = [];
+    const h = wakeHarness({
+        request: async () => { throw new Error("Permission denied"); },
+        logger: { ...console, warn: (...args) => warnings.push(args) }
+    });
+    const audio = await h.load("https-audio.js");
+    await audio.initialize(h.reference, key);
+    assert.equal(await audio.setKeepScreenOn(true), false);
+    assert.ok(warnings.some(([message]) => message.includes("Unable to keep the screen awake")));
+    assert.equal(h.listeners.size, 0);
+    const diagnostics = JSON.parse(audio.getConnectionDiagnostics());
+    assert.equal(diagnostics.active, true);
+    assert.equal(diagnostics.encrypted, true);
+    assert.equal(diagnostics.screenWakeLockActive, false);
+    await audio.leave();
+});
+
+test("Blazor configures wake locks in both transports and routes the toggle to the active audio module", () => {
+    const markup = fs.readFileSync(path.join(__dirname, "..", "Components", "VoiceChannel.razor"), "utf8");
+    assert.match(markup, /await ConfigureScreenWakeLock\(_module\)/);
+    assert.match(markup, /if \(_useHttpsAudio\)[\s\S]*?await ConfigureScreenWakeLock\(module\)/);
+    const handler = markup.slice(markup.indexOf("private async Task KeepScreenOnChanged()"), markup.indexOf("private async Task ToggleVideo()"));
+    assert.match(handler, /var module = ActiveAudioModule/);
+    assert.match(handler, /module\.InvokeAsync<bool>\("setKeepScreenOn", enabled\)/);
+    assert.match(handler, /revision != _mediaRevision/);
+    assert.match(handler, /request != _wakeLockRequestVersion/);
+});
+
 function nativeCodecs(encoderSupported = true, decoderSupported = true) {
     const instances = { encoders: [], decoders: [], audio: [] };
     class Data {

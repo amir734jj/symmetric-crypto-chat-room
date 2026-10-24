@@ -201,3 +201,28 @@ test("browser TLS controls stay visible without debug mode and remain separate f
     assert.match(markup, /Server TURN TLS verified/);
     assert.match(markup, /InvokeVoidAsync\("cancelTurnConnectionTest"\)/);
 });
+
+test("joining checks TURN before negotiating a transport and shares the visit's probe task", async () => {
+    const markup = await readFile(path.join(__dirname, "..", "Components", "VoiceChannel.razor"), "utf8");
+    const join = markup.slice(markup.indexOf("private async Task Join()"), markup.indexOf("private async Task<IJSObjectReference> InitializeWebRtc"));
+    assert.match(join, /if \(!_forceStealth && !_stealthForVisit && _voiceCapabilities\.SupportsWebRtc\)/);
+    const preflight = join.indexOf("await (_browserTurnTask ??= RunBrowserRelayTest());");
+    const negotiate = join.indexOf("SignalRStateManager.JoinAutomaticVoice");
+    assert.ok(preflight >= 0 && preflight < negotiate, "Preflight must complete before creating a WebRTC call");
+    assert.match(join, /_voiceCapabilities\.ForceStealth = _forceStealth \|\| _stealthForVisit/);
+    assert.match(markup, /"import", CallAssetsPath \+ "turn-diagnostics\.js"/);
+});
+
+test("failed TURN tests latch Stealth for the visit without persisting over the manual preference", async () => {
+    const markup = await readFile(path.join(__dirname, "..", "Components", "VoiceChannel.razor"), "utf8");
+    const probe = markup.slice(markup.indexOf("private async Task RunBrowserRelayTest()"), markup.indexOf("private async Task CheckTurnHealth()"));
+    assert.match(probe, /if \(!result\.Succeeded\) _stealthForVisit = true/);
+    assert.match(probe, /_browserTurnError = [^\n]+;[\s\S]*?_stealthForVisit = true/);
+    assert.doesNotMatch(markup, /_stealthForVisit = false/);
+    assert.doesNotMatch(probe, /setForceStealthPreference|localStorage|_forceStealth\s*=/);
+    const manual = markup.slice(markup.indexOf("private async Task TestBrowserRelay()"), markup.indexOf("private async Task RunBrowserRelayTest()"));
+    assert.match(manual, /_browserTurnTask == null \|\| _browserTurnTask\.IsCompleted/);
+    assert.match(manual, /await _browserTurnTask/);
+    assert.match(manual, /_stealthForVisit && _joined && !_useHttpsAudio && !_disposed/);
+    assert.match(manual, /await WebRtcMediaFailed/);
+});

@@ -30,7 +30,8 @@ test("Call assets have stable content fingerprints, complete dependency copies a
     for (const file of [
         "https-audio.js", "https-audio-worklet.js", "https-audio-crypto.js", "https-audio-opus.js",
         "https-audio-codec.js", "vendor/alawmulaw/mulaw.js", "vendor/alawmulaw/LICENSE",
-        "voice-chat.js", "voice-crypto-worker.js", "voice-transcription.js", "transcription-worker.js"
+        "voice-chat.js", "voice-crypto-worker.js", "voice-transcription.js", "transcription-worker.js",
+        "screen-wake-lock.js", "media-defaults.js"
     ]) {
         const relative = file.split("/").join(path.sep);
         assert.ok(links.includes(`wwwroot/js/call/${version}/${file}`), `Missing versioned asset: ${file}`);

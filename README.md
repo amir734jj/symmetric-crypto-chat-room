@@ -16,8 +16,20 @@ Simple secure chat room web (+ file transfer) application using SignalR (dotnet 
 - Updated clients can still decrypt cached messages using the legacy SHA-256 key derivation. Older clients cannot decrypt the new PBKDF2 message format and should be refreshed.
 - This key-derivation upgrade retains AES-CTR and does not add authenticated encryption or fix its existing zero-IV reuse across fields within a message. Password-derived confirmation values also permit offline password guessing; use a strong passphrase.
 - The active session password is stored as plaintext in browser `sessionStorage`. Successful logins are also retained in `localStorage` for optional quick login until individually removed or the site's storage is cleared.
-- Used [LiteDB](https://www.litedb.org/) to playback messages from 10 minutes ago to just joined users
+- Used [LiteDB](https://www.litedb.org/) to replay encrypted messages and attachments to newly joined users, retained for 12 hours by default
 - [Fody.PropertyChanged](https://github.com/Fody/PropertyChanged) to detect if any of state's properties changes which triggers re-renders of UI
+
+### Server message retention
+
+Encrypted messages and attachments are cached in LiteDB for **12 hours by default**. Configure the server runtime environment variable `MESSAGE_RETENTION_MINUTES` to a positive whole number of minutes:
+
+```text
+MESSAGE_RETENTION_MINUTES=720
+```
+
+For example, `1440` retains new messages for 24 hours and `60` for one hour. Restart/redeploy the API after changing this setting. Missing configuration uses 720 minutes; malformed, zero or negative values fail startup explicitly. The chat page reads and displays the actual server setting rather than a hard-coded duration.
+
+The setting applies when each message is recorded, including its encrypted attachments. Existing records keep their original expiration; deleted messages cannot be recovered by increasing retention. Expired messages are excluded from replay immediately, and physical cleanup runs roughly once per minute. Persist `DATABASE_PATH` across deployments and allow sufficient disk space for the longer cache. Voice media is never cached. The browser's existing 15-message display limit is separate from server retention and is unchanged.
 
 ### Opt-in channel push notifications
 
@@ -69,7 +81,9 @@ The shared password and raw password-derived encryption keys stay in the browser
 
 #### Audio over HTTPS (Stealth mode)
 
-**Automatic is the default:** join normally to try encrypted WebRTC audio/video. If a peer connection fails, cannot connect within approximately 20 seconds (checked every five seconds), or connects but receives no audio RTP packets within that time, clients negotiate a switch of the **whole call** to encrypted HTTPS audio. Silence is not the trigger; received packet counts are used. A password mismatch is reported as unreadable media, not a reason to change transport.
+**Automatic is the default:** before joining, the browser tests authenticated TURN allocation (up to 15 seconds) without requesting the microphone. A failed test, timeout or TURN-configuration error selects encrypted HTTPS audio **before joining**, avoiding an initial WebRTC call and later transport switch. The failed-test choice stays active for this visit, including leaving/rejoining and reconnecting; a later successful manual test does not switch back. Reloading the chat page resets the automatic choice and tests again. This does not change the manually saved Force HTTPS preference. Concurrent manual tests and joins share the same in-flight test, and successful results are reused for this visit. Manually forcing HTTPS or lacking encrypted WebRTC support skips the unnecessary TURN preflight.
+
+A successful allocation is not proof of two-way media connectivity. If WebRTC subsequently fails, cannot connect within approximately 20 seconds (checked every five seconds), or connects but receives no audio RTP packets within that time, clients still negotiate a one-way switch of the **whole call** to encrypted HTTPS audio. Silence is not the trigger; received packet counts are used. A password mismatch is reported as unreadable media, not a reason to change transport. Manually testing TURN and getting a failure during a WebRTC call also switches the whole call to Stealth. An active Stealth call never upgrades itself back to WebRTC.
 
 To skip WebRTC, enable **Advanced settings → Force Audio over HTTPS (Stealth mode)** before joining. This on/off preference is saved in this browser's local storage for all channels and restored on later visits, reloads and logins. Turning it off is remembered too; a new browser defaults to Automatic. Storage failures are reported, and the current selection can still be used for this visit. **Other Automatic participants switch with you; they do not need to enable the setting.** Browsers without encrypted WebRTC support also request HTTPS immediately. Everyone remains in one call, but the entire call becomes audio-only: cameras, screen sharing and transcription stop. Mute and call duration are preserved. The call stays on HTTPS until everyone leaves, avoiding repeated transport changes; the next new call tries WebRTC again unless Force Audio over HTTPS is selected. Both people must join; ringing alone does not join the caller.
 
@@ -141,7 +155,7 @@ The encrypted video receiver detects gaps in frame counters and requests a fresh
 
 Microphone audio uses real-time echo cancellation, noise suppression, and automatic gain control. Browsers that expose native voice isolation use it automatically; other browsers retain the standard WebRTC noise suppression fallback. The ICE debug view reports which processing features are supported and active.
 
-While voice is active, supported mobile browsers keep the screen awake and use their communication audio-session mode. Manually locking the device can still suspend a browser call when the mobile operating system does not allow background microphone or WebRTC activity.
+While joined, supported mobile browsers show **Keep screen on** in both WebRTC and Stealth (HTTPS) calls, including while waiting alone without microphone capture. It is off by default for each new call. Enabling it requests the browser's screen wake lock; returning to the foreground reacquires a released lock, and disabling it or leaving releases the lock and removes its listener. The selection is reapplied when switching transports, changing Stealth codecs or reconnecting within the same call. Denied requests are reported, not treated as active locks. The control requires a mobile browser exposing the Screen Wake Lock API over HTTPS; unsupported browsers do not show it. WebRTC also uses its communication audio-session mode where available. Manually locking the device or OS background restrictions can still suspend either transport; a screen wake lock does not override those policies.
 
 Supported iOS browsers show an in-call **Audio output** selector with Auto, Earpiece, and Speaker modes. Auto delegates routing to the phone's call audio session so the operating system can apply its proximity behavior; browsers do not expose the raw proximity sensor to the application. Earpiece and Speaker request a fixed handset route. Browsers implementing the Audio Output Devices API instead show **Choose output** for selecting a speaker, wired headset, or Bluetooth device through the system picker. Browsers without either API continue using the operating system's default route.
 

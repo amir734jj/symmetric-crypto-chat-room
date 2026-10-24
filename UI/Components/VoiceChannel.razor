@@ -102,13 +102,17 @@
         </div>
     }
     <div class="voice-settings-controls mt-2">
-        <HxButton Color="ThemeColor.Secondary" Enabled="@(!_checkingBrowserTurn)" OnClick="TestBrowserRelay">
+        <HxButton Color="ThemeColor.Secondary" Enabled="@(!_checkingBrowserTurn && !_busy)" OnClick="TestBrowserRelay">
             @(_checkingBrowserTurn ? "Testing relay..." : "Test TURN/TLS")
         </HxButton>
         <span class="@BrowserTurnStatusCssClass" role="status" aria-live="polite" aria-atomic="true">
             @BrowserTurnStatus
         </span>
     </div>
+    @if (_stealthForVisit)
+    {
+        <div class="text-muted mt-2" role="status">A failed TURN test selected Stealth audio for this visit. Calls will not retry WebRTC until you reload this page. Your saved Force HTTPS preference has not changed.</div>
+    }
     @if (_browserTurnResult != null || _browserTurnError != null)
     {
         <div class="voice-health-message mt-2">
@@ -409,6 +413,8 @@
     private bool _busy;
     private bool _checkingTurn;
     private bool _checkingBrowserTurn;
+    private bool _stealthForVisit;
+    private Task? _browserTurnTask;
     private bool _disposed;
     private bool _showDebug;
     private long _debugRequestVersion;
@@ -416,6 +422,7 @@
     private bool _usesAudioSessionOutputModes;
     private bool _screenWakeLockSupported;
     private bool _keepScreenOn;
+    private long _wakeLockRequestVersion;
     private bool _screenSharingSupported;
     private bool _liveTranscriptionSupported;
     private bool _transcriptionEnabled;
@@ -672,7 +679,12 @@
 
             _httpsAudioModule ??= await Js.InvokeAsync<IJSObjectReference>("import", CallAssetsPath + "https-audio.js");
             _voiceCapabilities = await _httpsAudioModule.InvokeAsync<VoiceCapabilities>("getCapabilities");
-            _voiceCapabilities.ForceStealth = _forceStealth;
+            if (!_forceStealth && !_stealthForVisit && _voiceCapabilities.SupportsWebRtc)
+            {
+                await (_browserTurnTask ??= RunBrowserRelayTest());
+                if (_disposed) return;
+            }
+            _voiceCapabilities.ForceStealth = _forceStealth || _stealthForVisit;
             var state = await SignalRStateManager.JoinAutomaticVoice(_voiceCapabilities);
             if (_disposed) { await SignalRStateManager.LeaveVoice(); return; }
             _joined = true;
@@ -714,11 +726,7 @@
                 true);
             _audioOutputSelectionSupported = await _module.InvokeAsync<bool>("supportsAudioOutputSelection");
             _usesAudioSessionOutputModes = await _module.InvokeAsync<bool>("usesAudioSessionOutputModes");
-            _screenWakeLockSupported = await _module.InvokeAsync<bool>("supportsMobileScreenWakeLock");
-            if (_keepScreenOn && _screenWakeLockSupported)
-            {
-                _keepScreenOn = await _module.InvokeAsync<bool>("setKeepScreenOn", true);
-            }
+            await ConfigureScreenWakeLock(_module);
             try
             {
                 _screenSharingSupported = await _module.InvokeAsync<bool>("supportsScreenSharing");
@@ -799,6 +807,7 @@
                 var module = _httpsAudioModule ?? throw new InvalidOperationException("HTTPS audio module is unavailable");
                 await module.InvokeVoidAsync("initialize", _reference, key, _opusAudio, _muted, _mediaRevision);
                 if (!_joined || _disposed) { await module.InvokeVoidAsync("leave"); return; }
+                await ConfigureScreenWakeLock(module);
                 await module.InvokeVoidAsync("setParticipants", state.Participants);
             }
             else
@@ -882,17 +891,36 @@
         await ActiveAudioModule!.InvokeVoidAsync("setMuted", _muted);
     }
 
+    private async Task ConfigureScreenWakeLock(IJSObjectReference module)
+    {
+        _screenWakeLockSupported = await module.InvokeAsync<bool>("supportsMobileScreenWakeLock");
+        if (_keepScreenOn && _screenWakeLockSupported)
+        {
+            _keepScreenOn = await module.InvokeAsync<bool>("setKeepScreenOn", true);
+            if (!_keepScreenOn) _error = "The browser could not keep the screen on. Check battery-saving and browser permissions.";
+        }
+    }
+
     private async Task KeepScreenOnChanged()
     {
-        if (_module == null) return;
-
+        var request = ++_wakeLockRequestVersion;
+        var module = ActiveAudioModule;
+        var revision = _mediaRevision;
+        var enabled = _keepScreenOn;
         try
         {
-            _keepScreenOn = await _module.InvokeAsync<bool>("setKeepScreenOn", _keepScreenOn);
-            _error = null;
+            if (module == null) throw new InvalidOperationException("The call audio module is unavailable.");
+            var active = await module.InvokeAsync<bool>("setKeepScreenOn", enabled);
+            if (request != _wakeLockRequestVersion || module != ActiveAudioModule || revision != _mediaRevision || !_joined) return;
+            _keepScreenOn = active;
+            _error = enabled && !active
+                ? "The browser could not keep the screen on. Check battery-saving and browser permissions."
+                : null;
         }
         catch (Exception exception)
         {
+            Logger.LogWarning(exception, "Unable to change the screen wake setting");
+            if (request != _wakeLockRequestVersion || module != ActiveAudioModule || revision != _mediaRevision || !_joined) return;
             _keepScreenOn = false;
             _error = $"Unable to change the screen wake setting: {exception.Message}";
         }
@@ -1276,15 +1304,25 @@
 
     private async Task TestBrowserRelay()
     {
+        if (_browserTurnTask == null || _browserTurnTask.IsCompleted)
+            _browserTurnTask = RunBrowserRelayTest();
+        await _browserTurnTask;
+        if (_stealthForVisit && _joined && !_useHttpsAudio && !_disposed)
+            await WebRtcMediaFailed("The browser TURN test failed; using Stealth audio for this visit.");
+    }
+
+    private async Task RunBrowserRelayTest()
+    {
         _checkingBrowserTurn = true;
         _browserTurnResult = null;
         _browserTurnError = null;
+        StateHasChanged();
         try
         {
             var credentials = await SignalRStateManager.GetTurnCredentials();
             if (_disposed) return;
             _turnDiagnosticsModule ??= await Js.InvokeAsync<IJSObjectReference>(
-                "import", "./js/turn-diagnostics.js");
+                "import", CallAssetsPath + "turn-diagnostics.js");
             if (_disposed)
             {
                 await _turnDiagnosticsModule.DisposeAsync();
@@ -1292,16 +1330,26 @@
             }
             var result = await _turnDiagnosticsModule.InvokeAsync<TurnConnectionTestResult>(
                 "testTurnConnection", credentials);
-            if (!_disposed) _browserTurnResult = result;
+            if (!_disposed)
+            {
+                _browserTurnResult = result;
+                if (!result.Succeeded) _stealthForVisit = true;
+            }
         }
         catch (Exception exception) when (exception is JSException
             or Microsoft.AspNetCore.SignalR.HubException or InvalidOperationException)
         {
-            if (!_disposed) _browserTurnError = $"Unable to test the browser relay: {exception.Message}";
+            if (!_disposed)
+            {
+                Logger.LogWarning(exception, "Browser TURN preflight failed; selecting Stealth audio for this visit");
+                _browserTurnError = $"Unable to test the browser relay: {exception.Message}";
+                _stealthForVisit = true;
+            }
         }
         finally
         {
             _checkingBrowserTurn = false;
+            if (!_disposed) StateHasChanged();
         }
     }
 

@@ -28,7 +28,18 @@
         <br/>
         Active users (@(State.Names.Count)): @(string.Join(", ", State.Names))
         <br/>
-        Encrypted messages and files are cached on the server for @ChatConstants.MessageRetentionMinutes minutes for chat playback.
+        @if (_messageRetentionMinutes is int minutes)
+        {
+            <span>Encrypted messages and files are cached on the server for @RetentionLabel(minutes) for chat playback.</span>
+        }
+        else if (_retentionError != null)
+        {
+            <span class="text-danger" role="alert">@_retentionError</span>
+        }
+        else
+        {
+            <span role="status">Loading server message retention...</span>
+        }
     </p>
 
     <div class="chat-toolbar">
@@ -214,15 +225,31 @@
     private bool _processingFiles;
 
     private string? _fileError;
+    private int? _messageRetentionMinutes;
+    private string? _retentionError;
 
-    protected override void OnInitialized()
+    private static string RetentionLabel(int minutes) => minutes % 60 == 0
+        ? $"{minutes / 60} {(minutes == 60 ? "hour" : "hours")}"
+        : $"{minutes} {(minutes == 1 ? "minute" : "minutes")}";
+
+    protected override async Task OnInitializedAsync()
     {
         if (!SignalRStateManager.IsLoggedIn())
         {
             Navigation.NavigateTo("/");
+            return;
         }
 
         State.PropertyChanged += OnChangeHandler;
+        try
+        {
+            _messageRetentionMinutes = await SignalRStateManager.GetMessageRetentionMinutes();
+        }
+        catch (Exception exception)
+        {
+            Logger.LogError(exception, "Unable to load the server message retention setting");
+            _retentionError = "Could not load the server message retention setting. Reload the page to retry.";
+        }
     }
 
     private async Task LogoutHandler()
