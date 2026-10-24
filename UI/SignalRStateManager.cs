@@ -204,6 +204,46 @@ public sealed class SignalRStateManager : AuthenticationStateProvider, IDisposab
         return _server.JoinVoice();
     }
 
+    public Task<List<VoiceParticipant>> JoinHttpsAudioVoice()
+    {
+        return _server.JoinHttpsAudioVoice();
+    }
+
+    public Task SendHttpsAudio(byte[] frame)
+    {
+        return _hubConnection.SendAsync(nameof(ITypedServer.SendHttpsAudio), frame);
+    }
+
+    public event Func<List<VoiceParticipant>, Task>? HttpsAudioParticipantsChangedEvent;
+    public event Func<string, byte[], Task>? HttpsAudioReceived;
+    public event Func<string, Task>? HttpsAudioFailedEvent;
+    public event Func<VoiceCallState, Task>? VoiceCallChangedEvent;
+    public event Func<long, string, byte[], Task>? AutomaticAudioReceived;
+
+    public Task<VoiceCallState> JoinAutomaticVoice(VoiceCapabilities capabilities) =>
+        _server.JoinAutomaticVoice(capabilities);
+
+    public Task<VoiceCallState> RequestHttpsAudio(long mediaRevision) =>
+        _server.RequestHttpsAudio(mediaRevision);
+
+    public Task SendAutomaticAudio(long mediaRevision, byte[] frame) =>
+        _hubConnection.SendAsync(nameof(ITypedServer.SendAutomaticAudio), mediaRevision, frame);
+
+    public Task VoiceCallChanged(VoiceCallState state) =>
+        VoiceCallChangedEvent?.Invoke(state) ?? Task.CompletedTask;
+
+    public Task ReceiveAutomaticAudio(long mediaRevision, string senderConnectionId, byte[] frame) =>
+        AutomaticAudioReceived?.Invoke(mediaRevision, senderConnectionId, frame) ?? Task.CompletedTask;
+
+    public Task HttpsAudioParticipantsChanged(List<VoiceParticipant> participants) =>
+        HttpsAudioParticipantsChangedEvent?.Invoke(participants) ?? Task.CompletedTask;
+
+    public Task ReceiveHttpsAudio(string senderConnectionId, byte[] frame) =>
+        HttpsAudioReceived?.Invoke(senderConnectionId, frame) ?? Task.CompletedTask;
+
+    public Task HttpsAudioFailed(string message) =>
+        HttpsAudioFailedEvent?.Invoke(message) ?? Task.CompletedTask;
+
     public Task<TurnCredentials> GetTurnCredentials()
     {
         return _server.GetTurnCredentials();

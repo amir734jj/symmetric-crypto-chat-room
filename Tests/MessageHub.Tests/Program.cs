@@ -7,6 +7,8 @@ using Microsoft.AspNetCore.SignalR;
 using Models;
 using Models.Hub;
 
+await HttpsAudioTests.Run();
+
 using var database = new LiteDatabase(new MemoryStream());
 using var playback = new PlaybackLogic(database);
 var client = DispatchProxy.Create<ITypedClient, ClientRecorder>();
@@ -135,7 +137,8 @@ finally
     await replacement.Leave();
 }
 
-MessageHub CreateHub(string id) => new(playback, new TurnHealthChecker())
+MessageHub CreateHub(string id) => new(playback, new TurnHealthChecker(),
+    Microsoft.Extensions.Logging.Abstractions.NullLogger<MessageHub>.Instance)
 {
     Context = new TestContext(id),
     Clients = new TestClients(client),
