@@ -2,12 +2,18 @@ FROM coturn/coturn:4.6.3
 
 ENV TURN_REALM=chat.coolify.hesamian.com \
     TURN_MIN_PORT=49160 \
-    TURN_MAX_PORT=49200
+    TURN_MAX_PORT=49200 \
+    TURN_LISTENING_PORT=3478 \
+    TURN_TLS_PORT=443 \
+    TURN_TLS_ONLY=false \
+    TURN_TLS_CERT_FILE=/etc/coturn/certs/fullchain.pem \
+    TURN_TLS_KEY_FILE=/etc/coturn/certs/privkey.pem
 
-EXPOSE 3478/tcp 3478/udp 49160-49200/udp
+EXPOSE 443/tcp 3478/tcp 3478/udp 49160-49200/udp
+
+COPY scripts/start-turn.sh /usr/local/bin/start-turn.sh
 
 HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
-    CMD turnutils_stunclient -p 3478 127.0.0.1 || exit 1
+    CMD turnutils_stunclient -p "$TURN_LISTENING_PORT" 127.0.0.1 || exit 1
 
-ENTRYPOINT ["/bin/sh", "-ec"]
-CMD [": \"${TURN_SECRET:?TURN_SECRET must be set}\"; : \"${TURN_EXTERNAL_IP:?TURN_EXTERNAL_IP must be set}\"; exec turnserver --no-cli --fingerprint --use-auth-secret --static-auth-secret=\"$TURN_SECRET\" --realm=\"$TURN_REALM\" --external-ip=\"$TURN_EXTERNAL_IP\" --listening-port=3478 --min-port=\"$TURN_MIN_PORT\" --max-port=\"$TURN_MAX_PORT\" --log-file=stdout"]
+ENTRYPOINT ["/bin/sh", "/usr/local/bin/start-turn.sh"]

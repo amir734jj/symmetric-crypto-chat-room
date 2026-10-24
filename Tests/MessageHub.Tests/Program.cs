@@ -19,6 +19,7 @@ var replacement = CreateHub("replacement");
 try
 {
     await first.Rejoin(channel, "Amir", "first-device");
+    await TurnTests.Run(first);
     Check(LastPresence().Single().Name == "Amir", "Unique names should not get a suffix");
     await second.Rejoin(channel, "amir", "second-device");
     var users = LastPresence();

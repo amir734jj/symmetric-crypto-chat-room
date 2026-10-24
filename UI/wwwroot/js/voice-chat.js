@@ -81,14 +81,22 @@ export async function initialize(
         { type: "module" });
 
     const host = turnCredentials.host || window.location.hostname;
+    const port = turnCredentials.port ?? (turnCredentials.tlsOnly ? 443 : 3478);
+    const endpoint = `${host}:${port}`;
     peerConfiguration = {
-        iceTransportPolicy: turnCredentials.relayOnly ? "relay" : "all",
-        iceServers: [
-            { urls: [`stun:${host}:3478`] },
+        iceTransportPolicy: turnCredentials.tlsOnly || turnCredentials.relayOnly ? "relay" : "all",
+        iceServers: turnCredentials.tlsOnly ? [
+            {
+                urls: [`turns:${endpoint}?transport=tcp`],
+                username: turnCredentials.username,
+                credential: turnCredentials.credential
+            }
+        ] : [
+            { urls: [`stun:${endpoint}`] },
             {
                 urls: [
-                    `turn:${host}:3478?transport=udp`,
-                    `turn:${host}:3478?transport=tcp`
+                    `turn:${endpoint}?transport=udp`,
+                    `turn:${endpoint}?transport=tcp`
                 ],
                 username: turnCredentials.username,
                 credential: turnCredentials.credential

@@ -123,7 +123,8 @@ async function createHarness(options = {}) {
             }
         },
         RTCPeerConnection: class {
-            constructor() {
+            constructor(configuration) {
+                this.configuration = configuration;
                 this.transceivers = [];
                 this.connectionState = "connected";
                 this.signalingState = "stable";
@@ -219,7 +220,8 @@ async function createHarness(options = {}) {
     const remoteContainer = createElement();
     async function join(withAudio = false, quality = "auto") {
         await voice.initialize(
-            reference, remoteContainer, createElement(), { username: "expiry:local", host: "localhost" },
+            reference, remoteContainer, createElement(),
+            { username: "expiry:local", host: "localhost", credential: "test-credential", ...options.turnCredentials },
             Buffer.alloc(32, 1).toString("base64"), quality, quality);
         if (withAudio) {
             streams[0].addTrack({
@@ -244,6 +246,65 @@ async function createHarness(options = {}) {
         }
     };
 }
+
+test("TLS-only ICE uses only authenticated TURN over TLS and enforces relay-only routing", async () => {
+    const h = await createHarness({
+        turnCredentials: { host: "turn.example.com", tlsOnly: true, relayOnly: false }
+    });
+    await h.join(true);
+    await h.voice.connectToParticipants([{ connectionId: "peer", name: "Peer" }]);
+    const configuration = h.connections[0].configuration;
+    assert.equal(configuration.iceTransportPolicy, "relay");
+    assert.deepEqual(JSON.parse(JSON.stringify(configuration.iceServers)), [{
+        urls: ["turns:turn.example.com:443?transport=tcp"],
+        username: "expiry:local",
+        credential: "test-credential"
+    }]);
+    h.voice.leave();
+});
+
+test("TLS-only ICE honors the configured public port", async () => {
+    const h = await createHarness({
+        turnCredentials: { host: "turn.example.com", tlsOnly: true, port: 5349 }
+    });
+    await h.join(true);
+    await h.voice.connectToParticipants([{ connectionId: "peer", name: "Peer" }]);
+    assert.equal(h.connections[0].configuration.iceServers[0].urls[0],
+        "turns:turn.example.com:5349?transport=tcp");
+    h.voice.leave();
+});
+
+test("legacy ICE preserves UDP/TCP, authentication, host fallback and relay policy", async () => {
+    for (const relayOnly of [true, false]) {
+        const h = await createHarness({
+            turnCredentials: { host: "", relayOnly }
+        });
+        await h.join(true);
+        await h.voice.connectToParticipants([{ connectionId: "peer", name: "Peer" }]);
+        const configuration = h.connections[0].configuration;
+        assert.equal(configuration.iceTransportPolicy, relayOnly ? "relay" : "all");
+        assert.deepEqual(JSON.parse(JSON.stringify(configuration.iceServers)), [
+            { urls: ["stun:localhost:3478"] },
+            {
+                urls: ["turn:localhost:3478?transport=udp", "turn:localhost:3478?transport=tcp"],
+                username: "expiry:local",
+                credential: "test-credential"
+            }
+        ]);
+        h.voice.leave();
+    }
+});
+
+test("legacy ICE honors the configured public port for STUN and both TURN transports", async () => {
+    const h = await createHarness({ turnCredentials: { port: 12345 } });
+    await h.join(true);
+    await h.voice.connectToParticipants([{ connectionId: "peer", name: "Peer" }]);
+    const servers = h.connections[0].configuration.iceServers;
+    assert.equal(servers[0].urls[0], "stun:localhost:12345");
+    assert.deepEqual(Array.from(servers[1].urls),
+        ["turn:localhost:12345?transport=udp", "turn:localhost:12345?transport=tcp"]);
+    h.voice.leave();
+});
 
 test("incoming video prepares the idle sender's encryption before an answer and reuses it when enabling the camera", async () => {
     const camera = {

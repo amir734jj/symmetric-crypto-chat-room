@@ -8,6 +8,8 @@ namespace Models
 
         public bool TurnTcpHealthy { get; set; }
 
+        public bool TurnTlsHealthy { get; set; }
+
         public string Message { get; set; } = string.Empty;
 
         public string Host { get; set; } = string.Empty;

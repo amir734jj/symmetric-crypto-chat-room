@@ -27,7 +27,7 @@ The chat page starts with **Advanced settings** and **Debug mode** off. Everyday
 
 While joined to the voice/video bridge, a small signal icon beside the heading shows measured WebRTC call health, not just whether SignalR is connected. Every five seconds it checks packet loss, round-trip latency, jitter, and available outgoing bandwidth relative to the selected audio/video presets, including screen sharing. Three green bars indicate healthy measurements; two amber bars indicate degradation (over 2% loss, 150 ms round-trip latency, 30 ms jitter, insufficient bandwidth headroom, or browser-reported bandwidth limitation); one red bar indicates poor health (over 5% loss, 300 ms latency, 60 ms jitter, less than half the required outgoing bitrate, or a disconnected/failed peer). The worst participant connection determines the icon. Gray bars mean waiting for a participant, connecting, or measurements unavailable, never an assumed healthy connection. A tooltip and screen-reader status provide measurement details. This indicator is independent of advanced/debug settings.
 
-The chat application and coturn are deployed as separate Dockerfile-based services. The coturn image is maintained in the sibling `stun-turn-setup` repository. No public STUN/TURN service is configured. Encoded audio and video frames are encrypted with AES-256-CTR using a PBKDF2 key derived from the channel name and shared chat password. Each encrypted frame carries its header length and an eight-byte counter so decryption remains consistent across browsers. WebRTC DTLS-SRTP authenticates and encrypts the media transport as a second protection layer.
+The chat application and coturn are deployed as separate Dockerfile-based services. Coturn can be built using this repository's `Dockerfile.stun-turn`; existing deployments may instead use the sibling `stun-turn-setup` repository. No public STUN/TURN service is configured. Encoded audio and video frames are encrypted with AES-256-CTR using a PBKDF2 key derived from the channel name and shared chat password. Each encrypted frame carries its header length and an eight-byte counter so decryption remains consistent across browsers. WebRTC DTLS-SRTP authenticates and encrypts the media transport as a second protection layer.
 
 Password-encrypted calls require a browser with `RTCRtpScriptTransform` support. Offers and answers include an HMAC confirmation of the derived media key without transmitting the password or key. Participants using different passwords can join the same channel and establish calls, but incompatible peers show **Unreadable media - different password** instead of playing noise or displaying corrupted video. Incoming frames are discarded before decoding until the peer's key confirmation matches; incompatible audio is also excluded from transcription. Missing confirmations are treated as unreadable rather than blocking the call. Matching-password participants in the same call can still hear and see one another normally. The connection fails closed when encoded transforms are unavailable; it never sends audio or video protected only by WebRTC transport encryption. Joining the bridge alone does not open the microphone; audio capture starts when another voice participant connects and stops again when the last peer leaves. Separate sessions can use the same display name and call each other. Matching names in a channel (case-insensitive) receive distinct `(session N)` labels in presence, call controls, video captions, and newly sent messages. These labels identify browser sessions, not hardware; reconnecting the same client instance still replaces its stale connection. Calling the current connection remains blocked. When calling between your own devices, mute one microphone or use headphones to avoid feedback. Calls start as audio-only. Use **Start video** during a call to grant camera access and share video, and **Stop video** to stop the camera and remove its WebRTC sender. Receive-only transceivers also initialize their sender encryption before answering, so enabling the second camera can safely reuse them. **Share screen** uses the browser's screen picker and replaces the encrypted camera track without creating another participant tile. Stopping the share restores the camera when it was active beforehand, or returns the call to audio-only otherwise.
 
@@ -71,6 +71,8 @@ Supported iOS browsers show an in-call **Audio output** selector with Auto, Earp
 
 `TURN_RELAY_ONLY` defaults to `true`. In this mode WebRTC uses `iceTransportPolicy: "relay"`, so voice fails instead of connecting directly when the configured coturn service is unavailable. Set it to `false` only when direct peer-to-peer paths through the configured STUN server are acceptable.
 
+`TURN_TLS_ONLY` defaults to `false`, preserving the existing STUN and TURN UDP/TCP configuration. Set it to `true` on the chat service to use only `turns:TURN_HOST:TURN_PORT?transport=tcp`. TLS-only mode always enforces relay-only ICE, even if `TURN_RELAY_ONLY=false`, and never falls back to direct, STUN, or unencrypted TURN connections. `TURN_HOST` is required in this mode and must match the relay's trusted certificate. `TURN_PORT` is the public client-facing port: it defaults to `443` in TLS-only mode and `3478` otherwise. Invalid TLS-mode or port settings fail explicitly.
+
 Set `TURN_EXTERNAL_IP` on the coturn service to its Docker host's public IPv4 address. Also publish and allow TCP/UDP 3478 and UDP 49160-49200 through the host firewall and network security rules. Set `TURN_HOST` on the chat service to the public DNS name clients should use.
 
 Set `TURN_SECRET` explicitly. The API uses it to issue short-lived credentials, and the coturn service uses the same value to validate them.
@@ -104,6 +106,121 @@ TURN_SECRET=replace-with-the-same-long-random-secret
 Create a DNS-only `A` record at your DNS provider for `turn.coolify.hesamian.com`, pointing to the value of `TURN_EXTERNAL_IP`. When using Cloudflare, set it to DNS only. Allow TCP/UDP 3478 and UDP 49160-49200 in the server provider's firewall.
 
 To verify relay routing in Chromium or Edge, open `chrome://webrtc-internals` or `edge://webrtc-internals` during a call and inspect the selected ICE candidate pair. The local candidate type must be `relay`, and its relay protocol/address must correspond to the configured `TURN_HOST`. With `TURN_RELAY_ONLY=true`, a non-relay candidate cannot be selected.
+
+#### Restricted networks: TURN over TLS on TCP 443
+
+Successful messaging or ringing only proves SignalR connectivity, not WebRTC media connectivity. Networks that block UDP or recognize plain TURN may still allow TURN over TLS on TCP 443. Media remains password-encrypted; TLS additionally protects the browser-to-relay TURN connection. This is not HTTPS camouflage or a guaranteed DPI bypass: hostname/IP blocking, TLS fingerprinting, and traffic analysis can still prevent calls.
+
+This repository's `Dockerfile.stun-turn` supports the TLS deployment below. If using the sibling `stun-turn-setup` repository instead, update its coturn configuration equivalently; changes here do not change that deployment automatically.
+
+1. Use a dedicated DNS-only hostname, such as `turn.example.com`, pointing to the relay's public IP. Obtain a publicly trusted certificate for it. Mount the full certificate chain and private key read-only into the coturn container; never bake them or `TURN_SECRET` into the image or commit them.
+2. Ensure TCP 443 is available on that public IP. If the chat HTTPS proxy already occupies it, use a separate relay server/public IP, or a deliberately configured layer-4 routing solution. An ordinary HTTP reverse proxy, Coolify domain route, or Cloudflare HTTP proxy does not carry TURN.
+3. Build the relay using `Dockerfile.stun-turn` from this repository. Configure the chat service:
+
+   ```env
+   TURN_HOST=turn.example.com
+   TURN_SECRET=replace-with-a-long-random-secret
+   TURN_TLS_ONLY=true
+   TURN_PORT=443
+   TURN_RELAY_ONLY=true
+   ```
+
+   Configure the coturn service:
+
+   ```env
+   TURN_EXTERNAL_IP=203.0.113.10
+   TURN_REALM=turn.example.com
+   TURN_SECRET=replace-with-the-same-long-random-secret
+   TURN_TLS_ONLY=true
+   TURN_TLS_PORT=443
+   TURN_TLS_CERT_FILE=/etc/coturn/certs/fullchain.pem
+   TURN_TLS_KEY_FILE=/etc/coturn/certs/privkey.pem
+   TURN_MIN_PORT=49160
+   TURN_MAX_PORT=49200
+   ```
+
+   Mount your certificate and key at the configured paths. If mounting an ACME certificate directory with symlinks, also mount the symlink targets. The container user must be able to read both files. Startup fails if either is missing or unreadable. Renew the certificate automatically and restart/redeploy coturn after renewal so it loads the new certificate.
+4. Publish **TCP 443** and **UDP 49160-49200** directly to the coturn host, and allow them through the host/provider firewall. The relay UDP range is still needed on the server even though restricted clients reach it using TLS/TCP. Set `TURN_EXTERNAL_IP` to the correct public address; NAT deployments must also map the relay port range correctly. `EXPOSE` alone does not publish any ports.
+5. Do **not** publish TCP/UDP 3478 for a TLS-only deployment. The image disables the plain TCP listener but retains internal UDP 3478 for its container health check. `TURN_LISTENING_PORT` changes this internal port; `TURN_TLS_PORT` changes the container TLS listener. If host and container TLS ports differ, the chat service's `TURN_PORT` must name the public port.
+6. Redeploy both services and refresh both browsers. In **Debug mode**, the STUN/TURN health button now validates the TLS certificate and a STUN binding response over TLS when TLS-only mode is configured. It runs from the API server: a green result is not proof that the restricted client can connect or that authenticated media allocation succeeds. The container's own health check only checks its internal UDP STUN listener.
+7. Make a call on the affected network. In ICE diagnostics/browser WebRTC internals, verify a selected relay candidate, the TLS relay transport (where exposed by the browser), the configured public endpoint, and increasing media byte counters in both directions. If ICE connects but media stays unreadable, check both peers' passwords, microphone permissions, and encoded-transform browser support. Compare with another network or a trusted censorship-resistant tunnel if TLS traffic is still blocked.
+
+TLS-only configuration does not disable mandatory media encryption. TCP relay can add latency and head-of-line blocking on lossy networks; lower audio/video quality if necessary.
+
+##### Coolify port and certificate checklist
+
+The following checklist is for **direct TLS termination in coturn**. If Traefik already owns port 443 on the same public IP and you want it to manage the certificate, use **Traefik TLS termination** below instead; do not combine the two configurations.
+
+Keep the chat resource's HTTPS domain and container port `3000` unchanged. On the coturn resource, use this repository's `Dockerfile.stun-turn`, leave **Domains** empty, and configure raw host port mappings rather than an HTTP route:
+
+| Public host port | Coturn container port | Protocol |
+| --- | --- | --- |
+| 443 | 443 | TCP |
+| 49160-49200 | 49160-49200 | UDP |
+
+For a Coolify Docker Compose resource, the corresponding service port entries are:
+
+```yaml
+ports:
+  - "443:443/tcp"
+  - "49160-49200:49160-49200/udp"
+```
+
+Confirm that UDP is explicitly selected; a TCP-only relay-range mapping is insufficient. Also allow these ports in the provider firewall. Do not expose the internal STUN health-check port publicly.
+
+Coolify's HTTPS proxy normally already binds TCP 443. Another DNS hostname pointing to the same IP does not free that port. Prefer a dedicated public IP/server for coturn on 443; do not stop the chat proxy to free it. As an alternative, publish host TCP `5349` to coturn container TCP `443` and set `TURN_PORT=5349` on the chat resource, leaving `TURN_TLS_PORT=443` on coturn. This avoids the port collision but the restricted network may block 5349 even when it allows 443.
+
+Use **Persistent Storage** to mount the certificate and key into the coturn resource at their configured paths, or declare read-only bind mounts in Compose. Coolify's automatic HTTPS certificate management for chat domains does not automatically install a usable certificate into coturn. Arrange trusted certificate issuance, renewal, read permissions, and a coturn restart after renewal separately.
+
+Apply the environment variables above at runtime to the correct resource, deploy both resources, and refresh all existing browser tabs so they load the TLS-capable client. If coturn currently builds from the sibling repository, changing only the chat deployment is insufficient. Finish by testing an actual two-way call from the restricted network.
+
+##### Coolify Traefik TLS termination: no certificate files in coturn
+
+Traefik can terminate TLS for a dedicated TURN hostname using a **TCP router** on its existing HTTPS entry point. It then forwards decrypted TURN bytes, not HTTP, to coturn over a private Docker network:
+
+```text
+Browser -- TURN/TLS :443 --> Traefik -- TURN/TCP :3478 --> coturn
+```
+
+This shares public TCP 443 with the chat HTTPS site without publishing another host TCP listener. Traefik obtains and renews the TURN hostname's certificate using its configured ACME resolver. Mandatory password-based media encryption and DTLS-SRTP remain enabled; the TURN connection between Traefik and coturn is not TLS-protected, so keep that hop on a trusted private Docker network.
+
+1. Create a DNS-only `A` record for a separate TURN hostname pointing to the Coolify server. Do not create a normal HTTP domain route for that hostname. Remove an incorrect `AAAA` record if the server cannot accept this traffic over IPv6.
+2. Keep `TURN_TLS_ONLY=true`, `TURN_PORT=443`, `TURN_RELAY_ONLY=true`, and the TURN hostname on the **chat** resource.
+3. Set **`TURN_TLS_ONLY=false` on the coturn resource**. Keep `TURN_LISTENING_PORT=3478`, the correct public `TURN_EXTERNAL_IP`, and the same `TURN_SECRET` as chat. In this configuration `start-turn.sh` deliberately does not require a certificate or key: TLS is handled by Traefik, not coturn.
+4. Ensure Traefik and coturn share a Docker network. Add these custom labels to the coturn resource, replacing the hostname and, if necessary, Coolify's usual `https` entry point and `letsencrypt` resolver names:
+
+   ```text
+   traefik.enable=true
+   traefik.tcp.routers.turn-relay.rule=HostSNI(`turn.example.com`)
+   traefik.tcp.routers.turn-relay.entrypoints=https
+   traefik.tcp.routers.turn-relay.service=turn-relay
+   traefik.tcp.routers.turn-relay.tls=true
+   traefik.tcp.routers.turn-relay.tls.passthrough=false
+   traefik.tcp.routers.turn-relay.tls.certresolver=letsencrypt
+   traefik.tcp.routers.turn-relay.tls.options=turn-relay@file
+   traefik.tcp.services.turn-relay.loadbalancer.server.port=3478
+   ```
+
+   If coturn has multiple Docker networks, also set `traefik.docker.network` to the actual network shared with Traefik. Keep unrelated Coolify management labels. Never use a wildcard HostSNI rule for this router: that would also capture other sites' TLS traffic. Do not enable TLS passthrough, which would require coturn's own certificate again.
+5. In the server's Traefik **Dynamic Configurations**, add the following TLS option. It is specific to this TURN router and does not change the chat site's TLS settings:
+
+   ```yaml
+   tls:
+     options:
+       turn-relay:
+         minVersion: VersionTLS12
+         alpnProtocols:
+           - stun.turn
+           - stun.nat-discovery
+   ```
+
+   These ALPN identifiers allow clients that advertise STUN/TURN protocols rather than HTTP. SNI-based sharing requires clients to send the TURN hostname in their TLS handshake; verify the actual browsers used.
+6. Publish only **UDP 49160-49200** from coturn to the same host port range, and allow it in the host/provider firewall. Do not publish coturn TCP 443 or TCP/UDP 3478. Traefik already publishes public TCP 443 and reaches coturn's 3478 internally. Leave the chat container port and its existing HTTPS route unchanged.
+7. Redeploy coturn and chat, check Traefik's logs for successful certificate issuance, then refresh both browsers. The chat's TLS health check targets public Traefik port 443 and validates the certificate and backend STUN response. Test an actual two-way call on the restricted network; an HTTP request to the TURN hostname is not a valid health check.
+
+Coolify's standard resolver uses an HTTP challenge: public DNS must point to this server and port 80 must remain reachable for issuance/renewal. If your proxy uses a different ACME challenge, follow its requirements instead. A dedicated TURN hostname is essential: routing all traffic for that hostname to coturn means it cannot also serve the chat website.
+
+See [Coolify's Traefik overview](https://coolify.io/docs/core/networking/proxy/traefik/overview) and [Traefik TCP TLS configuration](https://doc.traefik.io/traefik/reference/routing-configuration/tcp/tls/).
 
 ### Screenshots
 
