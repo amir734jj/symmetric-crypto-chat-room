@@ -82,6 +82,29 @@
         </div>
     </div>
 
+    <div class="voice-settings-controls mt-2">
+        <HxButton Color="ThemeColor.Secondary" Enabled="@(!_checkingBrowserTurn)" OnClick="TestBrowserRelay">
+            @(_checkingBrowserTurn ? "Testing relay..." : "Test TURN/TLS")
+        </HxButton>
+        <span class="@BrowserTurnStatusCssClass" role="status" aria-live="polite" aria-atomic="true">
+            @BrowserTurnStatus
+        </span>
+    </div>
+    @if (_browserTurnResult != null || _browserTurnError != null)
+    {
+        <div class="voice-health-message mt-2">
+            @if (_browserTurnResult != null)
+            {
+                <div>@_browserTurnResult.Url - @_browserTurnResult.Message</div>
+            }
+            else
+            {
+                <div class="text-danger">@_browserTurnError</div>
+            }
+            <small class="text-muted">Last browser allocation test, not a continuous connection monitor or a two-way media test. Retest after changing networks.</small>
+        </div>
+    }
+
     @if (AdvancedMode && _joined && _liveTranscriptionSupported)
     {
         <small class="voice-transcription-warning text-muted">Starting transcription downloads large model files unless already cached. Wi-Fi recommended.</small>
@@ -155,6 +178,10 @@
                 <div class="@TurnHealthMessageCssClass" role="status">
                     @_turnHealth.Host:@_turnHealth.Port - @_turnHealth.Message
                 </div>
+            }
+            else if (_turnHealthError != null)
+            {
+                <div class="voice-health-message mt-2 text-danger" role="alert">@_turnHealthError</div>
             }
         </section>
     }
@@ -292,6 +319,7 @@
     private readonly List<string> _transcript = [];
     private DotNetObjectReference<VoiceChannel>? _reference;
     private IJSObjectReference? _module;
+    private IJSObjectReference? _turnDiagnosticsModule;
     private Task<IJSObjectReference>? _ringtoneModuleTask;
     private long _ringtoneRequestId;
     private ElementReference _remoteMediaContainer;
@@ -305,6 +333,8 @@
     private bool _cameraEnabledBeforeScreenShare;
     private bool _busy;
     private bool _checkingTurn;
+    private bool _checkingBrowserTurn;
+    private bool _disposed;
     private bool _showDebug;
     private long _debugRequestVersion;
     private bool _audioOutputSelectionSupported;
@@ -339,6 +369,9 @@
     private string _transcriptionModel = "auto";
     private string _recommendedTranscriptionModel = "tiny";
     private TurnHealthStatus? _turnHealth;
+    private string? _turnHealthError;
+    private TurnConnectionTestResult? _browserTurnResult;
+    private string? _browserTurnError;
     private string _connectionHealth = "waiting";
     private string _connectionHealthDetail = "Waiting for another participant";
 
@@ -359,20 +392,43 @@
         .FirstOrDefault(user => user.ConnectionId == SignalRStateManager.ConnectionId)?.Name
         ?? State.UserInfo?.Name ?? "You";
 
-    private ThemeColor TurnHealthColor => _turnHealth switch
+    private ThemeColor TurnHealthColor => _turnHealthError != null ? ThemeColor.Danger : _turnHealth switch
     {
         { Healthy: true } => ThemeColor.Success,
         { Healthy: false } => ThemeColor.Danger,
         _ => ThemeColor.Secondary
     };
 
-    private string TurnHealthButtonText => _checkingTurn
-        ? "Checking STUN/TURN..."
-        : _turnHealth switch
+    private string BrowserTurnStatus => _checkingBrowserTurn
+        ? "Testing from this browser..."
+        : _browserTurnError != null ? "Browser relay test failed"
+        : _browserTurnResult switch
         {
-            { Healthy: true } => "STUN/TURN healthy",
-            { Healthy: false } => "STUN/TURN unavailable",
-            _ => "Check STUN/TURN"
+            { Succeeded: true, Tls: true } => "Last test: TURN TLS verified",
+            { Succeeded: true, Tls: false } => "Last test: TURN reachable (no TLS)",
+            { Succeeded: false, Tls: true } => "Last test: TURN TLS failed",
+            { Succeeded: false } => "Last test: TURN failed",
+            _ => "Browser relay: not tested"
+        };
+
+    private string BrowserTurnStatusCssClass => _checkingBrowserTurn ? "text-muted"
+        : _browserTurnError != null ? "text-danger"
+        : _browserTurnResult switch
+        {
+            { Succeeded: true, Tls: true } => "text-success",
+            { Succeeded: true } => "text-warning",
+            { Succeeded: false } => "text-danger",
+            _ => "text-muted"
+        };
+
+    private string TurnHealthButtonText => _checkingTurn
+        ? "Checking server relay..."
+        : _turnHealthError != null ? "Server relay check failed" : _turnHealth switch
+        {
+            { Healthy: true, TurnTlsHealthy: true } => "Server TURN TLS verified",
+            { Healthy: true } => "Server STUN/TURN healthy",
+            { Healthy: false } => "Server relay check failed",
+            _ => "Check server relay"
         };
 
     private string TurnHealthMessageCssClass => _turnHealth?.Healthy == true
@@ -928,12 +984,50 @@
         }
     }
 
+    private async Task TestBrowserRelay()
+    {
+        _checkingBrowserTurn = true;
+        _browserTurnResult = null;
+        _browserTurnError = null;
+        try
+        {
+            var credentials = await SignalRStateManager.GetTurnCredentials();
+            if (_disposed) return;
+            _turnDiagnosticsModule ??= await Js.InvokeAsync<IJSObjectReference>(
+                "import", "./js/turn-diagnostics.js");
+            if (_disposed)
+            {
+                await _turnDiagnosticsModule.DisposeAsync();
+                return;
+            }
+            var result = await _turnDiagnosticsModule.InvokeAsync<TurnConnectionTestResult>(
+                "testTurnConnection", credentials);
+            if (!_disposed) _browserTurnResult = result;
+        }
+        catch (Exception exception) when (exception is JSException
+            or Microsoft.AspNetCore.SignalR.HubException or InvalidOperationException)
+        {
+            if (!_disposed) _browserTurnError = $"Unable to test the browser relay: {exception.Message}";
+        }
+        finally
+        {
+            _checkingBrowserTurn = false;
+        }
+    }
+
     private async Task CheckTurnHealth()
     {
         _checkingTurn = true;
+        _turnHealth = null;
+        _turnHealthError = null;
         try
         {
             _turnHealth = await SignalRStateManager.CheckTurnHealth();
+        }
+        catch (Exception exception) when (exception is Microsoft.AspNetCore.SignalR.HubException
+            or InvalidOperationException)
+        {
+            _turnHealthError = $"Unable to check the server relay: {exception.Message}";
         }
         finally
         {
@@ -1316,6 +1410,12 @@
 
     public async ValueTask DisposeAsync()
     {
+        _disposed = true;
+        if (_turnDiagnosticsModule != null)
+        {
+            await _turnDiagnosticsModule.InvokeVoidAsync("cancelTurnConnectionTest");
+            await _turnDiagnosticsModule.DisposeAsync();
+        }
         ClearOutgoingCall();
         SignalRStateManager.VoiceOfferReceived -= ReceiveVoiceOffer;
         SignalRStateManager.VoiceAnswerReceived -= ReceiveVoiceAnswer;

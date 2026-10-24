@@ -1,4 +1,5 @@
 import { getNetworkConnection, isMobileDevice } from "./media-defaults.js";
+import { createIceConfiguration } from "./turn-diagnostics.js";
 
 let dotNetReference;
 let remoteMediaContainer;
@@ -80,29 +81,7 @@ export async function initialize(
         new URL("./voice-crypto-worker.js", import.meta.url),
         { type: "module" });
 
-    const host = turnCredentials.host || window.location.hostname;
-    const port = turnCredentials.port ?? (turnCredentials.tlsOnly ? 443 : 3478);
-    const endpoint = `${host}:${port}`;
-    peerConfiguration = {
-        iceTransportPolicy: turnCredentials.tlsOnly || turnCredentials.relayOnly ? "relay" : "all",
-        iceServers: turnCredentials.tlsOnly ? [
-            {
-                urls: [`turns:${endpoint}?transport=tcp`],
-                username: turnCredentials.username,
-                credential: turnCredentials.credential
-            }
-        ] : [
-            { urls: [`stun:${endpoint}`] },
-            {
-                urls: [
-                    `turn:${endpoint}?transport=udp`,
-                    `turn:${endpoint}?transport=tcp`
-                ],
-                username: turnCredentials.username,
-                credential: turnCredentials.credential
-            }
-        ]
-    };
+    peerConfiguration = createIceConfiguration(turnCredentials);
 
     localStream = new MediaStream();
     document.removeEventListener("visibilitychange", handleVisibilityChange);

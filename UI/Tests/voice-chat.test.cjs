@@ -209,7 +209,7 @@ async function createHarness(options = {}) {
             }
         });
         await module.link(specifier => {
-            assert.equal(specifier, "./media-defaults.js");
+            assert.ok(["./media-defaults.js", "./turn-diagnostics.js"].includes(specifier));
             return load(path.resolve(path.dirname(filename), specifier));
         });
         await module.evaluate();
