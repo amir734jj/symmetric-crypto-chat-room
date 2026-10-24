@@ -1095,14 +1095,26 @@
 
     private async Task Ring(OnlineUser user)
     {
-        if (user.InVoice || _participantIds.Contains(user.ConnectionId))
-        {
-            _callStatus = _joined ? "Connected in the bridge." : "Already in the call - join the bridge to talk.";
-            return;
-        }
+        if (_busy || _disposed || _outgoingCallConnectionId != null) return;
+        _busy = true;
+        _error = null;
         _callStatus = null;
         try
         {
+            if (!_joined)
+            {
+                _callStatus = "Joining the bridge before calling...";
+                await Join();
+            }
+            _callStatus = null;
+            if (!_joined || _disposed) return;
+            _busy = true;
+            if (user.InVoice || _participantIds.Contains(user.ConnectionId) ||
+                State.OnlineUsers.Any(online => online.ConnectionId == user.ConnectionId && online.InVoice))
+            {
+                _callStatus = "Connected in the bridge.";
+                return;
+            }
             _outgoingCallConnectionId = user.ConnectionId;
             _outgoingCallName = user.Name;
             _callStatus = $"Ringing {user.Name}... (30 seconds)";
@@ -1117,7 +1129,9 @@
                 _callStatus = null;
             }
             _error = $"Unable to ring {user.Name}: {exception.Message}";
+            Logger.LogWarning(exception, "Unable to ring {ConnectionId}", user.ConnectionId);
         }
+        finally { _busy = false; }
     }
 
     private async Task StopRinging()

@@ -24,6 +24,26 @@ test("Havit icons load from the generated scoped CSS bundle instead of the obsol
     assert.doesNotMatch(html, /Havit\.Blazor\.Components\.Web\.Bootstrap\/defaults\.css/);
 });
 
+test("ringing joins the caller first and never invites after failed setup or when the target already joined", async () => {
+    const markup = await readFile(path.join(__dirname, "..", "Components", "VoiceChannel.razor"), "utf8");
+    const ring = markup.slice(markup.indexOf("private async Task Ring(OnlineUser user)"),
+        markup.indexOf("private async Task StopRinging()"));
+    const join = ring.indexOf("await Join();");
+    const ready = ring.indexOf("if (!_joined || _disposed) return;");
+    const membership = ring.indexOf("State.OnlineUsers.Any(online => online.ConnectionId == user.ConnectionId && online.InVoice)");
+    const pending = ring.indexOf("_outgoingCallConnectionId = user.ConnectionId;");
+    const timeout = ring.indexOf("StartOutgoingCallTimeout(user.ConnectionId, user.Name);");
+    const invite = ring.indexOf("await SignalRStateManager.RingVoice(user.ConnectionId);");
+    assert.match(ring, /if \(_busy \|\| _disposed \|\| _outgoingCallConnectionId != null\) return;/);
+    assert.match(ring, /if \(!_joined\)\s*\{[^}]*await Join\(\);/);
+    assert.ok(join >= 0 && join < ready && ready < membership && membership < pending &&
+        pending < timeout && timeout < invite,
+        "Join, check successful setup and current presence, then start the invitation and its timeout");
+    assert.match(ring, /_callStatus = "Connected in the bridge\.";\s*return;/);
+    assert.match(ring, /catch \(Exception exception\)[\s\S]*ClearOutgoingCall\(\);/);
+    assert.match(ring, /finally \{ _busy = false; \}/);
+});
+
 async function createHarness(options = {}) {
     const imports = [];
     const workers = [];
