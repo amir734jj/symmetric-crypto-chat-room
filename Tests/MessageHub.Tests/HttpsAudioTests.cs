@@ -163,16 +163,64 @@ internal static class HttpsAudioTests
             Check(!initial.HttpsAudio && initial.Opus, "An empty call must reset to Automatic on the next join");
             var joined = await second.JoinAutomaticVoice(Capabilities());
             Check(joined.MediaRevision == initial.MediaRevision, "Ordinary joins must not restart existing media");
-            await normal.JoinVoice();
-            await Reject(() => normal.SendVoiceOffer(first.Context.ConnectionId, "legacy"));
+            var legacyPeers = await normal.JoinVoice();
+            Check(legacyPeers.Select(peer => peer.ConnectionId).ToHashSet().SetEquals(
+                new[] { first.Context.ConnectionId, second.Context.ConnectionId }),
+                "Older WebRTC clients must discover Automatic clients instead of silently joining an isolated call");
+            Check(LastState(first).Participants.Any(peer => peer.ConnectionId == normal.Context.ConnectionId) &&
+                LastState(first).MediaRevision == initial.MediaRevision,
+                "A legacy join must update the Automatic roster without restarting media");
+            await normal.SendVoiceOffer(first.Context.ConnectionId, "legacy-offer");
+            await first.SendVoiceAnswer(normal.Context.ConnectionId, "automatic-answer");
+            await normal.SendVoiceIceCandidate(first.Context.ConnectionId, "legacy-ice");
+            await first.SendVoiceIceCandidate(normal.Context.ConnectionId, "automatic-ice");
+            Check((await outsider.JoinVoice()).Count == 0,
+                "Mixed-version discovery must still exclude other channels");
+            await Reject(() => first.SendVoiceOffer(outsider.Context.ConnectionId, "cross-channel"));
+            await Reject(() => outsider.SendVoiceOffer(first.Context.ConnectionId, "cross-channel"));
+            await outsider.LeaveVoice();
+            Check(Recorder(first).Calls.Any(call => call.Method == nameof(ITypedClient.ReceiveVoiceOffer) &&
+                (string)call.Args[1]! == "legacy-offer") &&
+                Recorder(normal).Calls.Any(call => call.Method == nameof(ITypedClient.ReceiveVoiceAnswer) &&
+                    (string)call.Args[1]! == "automatic-answer") &&
+                Recorder(first).Calls.Any(call => call.Method == nameof(ITypedClient.ReceiveVoiceIceCandidate) &&
+                    (string)call.Args[1]! == "legacy-ice") &&
+                Recorder(normal).Calls.Any(call => call.Method == nameof(ITypedClient.ReceiveVoiceIceCandidate) &&
+                    (string)call.Args[1]! == "automatic-ice"),
+                "Offers, answers and ICE must cross old/new WebRTC client versions without changing ciphertext");
             await Reject(() => normal.RequestHttpsAudio(initial.MediaRevision));
+            await Reject(() => first.RequestHttpsAudio(initial.MediaRevision), "refresh");
+            Check(!LastState(first).HttpsAudio, "Legacy clients must prevent an incompatible partial fallback");
+            await second.LeaveVoice();
+            await Reject(() => second.JoinAutomaticVoice(Capabilities(force: true)), "refresh");
+            await second.JoinAutomaticVoice(Capabilities());
+            await normal.LeaveVoice();
+            Check(LastState(first).Participants.All(peer => peer.ConnectionId != normal.Context.ConnectionId),
+                "Legacy leave must remove the peer from Automatic snapshots");
             var fallback = await first.RequestHttpsAudio(initial.MediaRevision);
             Check(fallback.HttpsAudio && fallback.Opus && LastState(second).MediaRevision == fallback.MediaRevision,
                 "WebRTC failure must coordinate a whole-call switch");
             var duplicate = await second.RequestHttpsAudio(initial.MediaRevision);
             Check(duplicate.MediaRevision == fallback.MediaRevision, "Repeated fallback reports must be idempotent");
+            await Reject(() => normal.JoinVoice(), "refresh");
+            await Reject(() => normal.JoinHttpsAudioVoice(), "refresh");
 
             foreach (var hub in new[] { first, second, normal }) await hub.LeaveVoice();
+            await normal.JoinVoice();
+            var modernAfterLegacy = await first.JoinAutomaticVoice(Capabilities());
+            Check(modernAfterLegacy.Participants.Single().ConnectionId == normal.Context.ConnectionId,
+                "Automatic clients joining an existing legacy WebRTC call must discover its participants");
+            await first.SendVoiceOffer(normal.Context.ConnectionId, "modern-offer");
+            await normal.SendVoiceAnswer(first.Context.ConnectionId, "legacy-answer");
+            await normal.Leave();
+            Check(LastState(first).Participants.Count == 0,
+                "Legacy disconnect must update the Automatic roster");
+            await normal.Rejoin(channel, normal.Context.ConnectionId, normal.Context.ConnectionId);
+            await first.LeaveVoice();
+            await normal.JoinHttpsAudioVoice();
+            await Reject(() => first.JoinAutomaticVoice(Capabilities()), "refresh");
+            await normal.LeaveVoice();
+
             initial = await first.JoinAutomaticVoice(Capabilities());
             await normal.JoinAutomaticVoice(Capabilities(https: false, opus: false));
             await Reject(() => second.JoinAutomaticVoice(Capabilities(force: true)));
@@ -215,7 +263,7 @@ internal static class HttpsAudioTests
             await first.SendAutomaticAudio(rejoined.MediaRevision, opusFrame);
             Check(Recorder(first).Calls.Count(call => call.Method == nameof(ITypedClient.HttpsAudioFailed)) == beforeLimit + 1,
                 "Automatic audio rejoin must reset rate limiting");
-            Console.WriteLine("PASS: Automatic/forced interoperability, whole-call WebRTC fallback, native Opus negotiation, codec epochs, stale frame rejection, sticky fallback, reset, legacy isolation, invalid frames, rate limits and unsupported-browser handling");
+            Console.WriteLine("PASS: Automatic/forced interoperability, whole-call WebRTC fallback, native Opus negotiation, codec epochs, stale frame rejection, sticky fallback, reset, mixed-version WebRTC signaling, explicit legacy Stealth upgrade requirements, invalid frames, rate limits and unsupported-browser handling");
         }
         finally
         {
@@ -228,10 +276,16 @@ internal static class HttpsAudioTests
         if (!condition) throw new InvalidOperationException(message);
     }
 
-    private static async Task Reject(Func<Task> action)
+    private static async Task Reject(Func<Task> action, string? expectedMessage = null)
     {
         try { await action(); }
-        catch (HubException) { return; }
+        catch (HubException exception)
+        {
+            if (expectedMessage != null)
+                Check(exception.Message.Contains(expectedMessage, StringComparison.OrdinalIgnoreCase),
+                    $"Expected an explicit '{expectedMessage}' error, received: {exception.Message}");
+            return;
+        }
         throw new InvalidOperationException("Expected invalid audio/signaling operation to be rejected");
     }
 

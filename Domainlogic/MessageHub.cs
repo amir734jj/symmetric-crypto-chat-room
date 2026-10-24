@@ -36,6 +36,8 @@ namespace DomainLogic
         private static readonly ConcurrentDictionary<string, VoiceCapabilities> AutomaticVoiceUsers = new();
         private static readonly Dictionary<string, VoiceCallState> AutomaticCalls = new();
         private static long _voiceRevision;
+        private const string VoiceClientRefreshRequired =
+            "A participant is using an older call client. Everyone must refresh the page before using Stealth audio.";
 
         private static readonly ConcurrentDictionary<string, string> PendingVoiceCalls = new();
 
@@ -163,22 +165,24 @@ namespace DomainLogic
             }
 
             AudioRates.TryRemove(connectionId, out _);
-            if (VoiceUsers.TryRemove(connectionId, out var transport))
+            var wasInVoice = VoiceUsers.TryRemove(connectionId, out var transport);
+            if (wasInVoice)
             {
                 await Clients.Group(userInfo.Channel).VoiceParticipantLeft(connectionId);
                 if (transport == 1) await NotifyHttpsAudioParticipants(userInfo.Channel);
             }
-            await RemoveAutomaticVoice(connectionId, userInfo.Channel);
+            await RemoveAutomaticVoice(connectionId, userInfo.Channel, wasInVoice);
 
             await Groups.RemoveFromGroupAsync(connectionId, userInfo.Channel);
             await NotifyAll(userInfo.Channel, MessageTypeEnum.Left);
         }
 
-        public Task<List<VoiceParticipant>> JoinVoice()
+        public async Task<List<VoiceParticipant>> JoinVoice()
         {
             var userInfo = GetCurrentUser();
             JoinVoiceTransport(0);
-            return Task.FromResult(GetVoiceParticipants(userInfo.Channel, Context.ConnectionId, 0));
+            await NotifyAutomaticCall(userInfo.Channel);
+            return GetVoiceParticipants(userInfo.Channel, Context.ConnectionId, 0);
         }
 
         public async Task<List<VoiceParticipant>> JoinHttpsAudioVoice()
@@ -192,10 +196,22 @@ namespace DomainLogic
 
         private void JoinVoiceTransport(byte transport)
         {
-            VoiceUsers.TryAdd(Context.ConnectionId, transport);
-            if (!VoiceUsers.TryGetValue(Context.ConnectionId, out var current) || current != transport)
+            var user = GetCurrentUser();
+            lock (VoiceGate)
             {
-                throw new HubException("Leave the call before changing audio transport");
+                if (AutomaticVoiceUsers.ContainsKey(Context.ConnectionId))
+                    throw new HubException("Leave the call before changing audio transport");
+                AutomaticCalls.TryGetValue(user.Channel, out var call);
+                if (call != null && (transport == 1 || call.HttpsAudio))
+                    throw new HubException(VoiceClientRefreshRequired);
+                VoiceUsers.TryAdd(Context.ConnectionId, transport);
+                if (!VoiceUsers.TryGetValue(Context.ConnectionId, out var current) || current != transport)
+                    throw new HubException("Leave the call before changing audio transport");
+                if (call != null)
+                {
+                    call.Revision = ++_voiceRevision;
+                    call.Reason = WebRtcCallReason(user.Channel);
+                }
             }
         }
 
@@ -203,7 +219,7 @@ namespace DomainLogic
         {
             return VoiceUsers
                 .Where(pair => pair.Value == transport && pair.Key != currentId &&
-                    AutomaticVoiceUsers.ContainsKey(pair.Key) == AutomaticVoiceUsers.ContainsKey(currentId))
+                    (transport == 0 || AutomaticVoiceUsers.ContainsKey(pair.Key) == AutomaticVoiceUsers.ContainsKey(currentId)))
                 .Select(pair => Users.TryGetValue(pair.Key, out var user) && user.Channel == channel
                     ? new VoiceParticipant { ConnectionId = pair.Key, Name = GetDisplayName(user) }
                     : null)
@@ -256,9 +272,13 @@ namespace DomainLogic
             {
                 if (VoiceUsers.ContainsKey(Context.ConnectionId))
                     throw new HubException("Leave the current call before joining again");
+                if (HasLegacyVoiceParticipants(user.Channel, 1))
+                    throw new HubException(VoiceClientRefreshRequired);
                 AutomaticCalls.TryGetValue(user.Channel, out var previous);
                 var https = previous?.HttpsAudio == true || capabilities.ForceStealth || !capabilities.SupportsWebRtc;
                 var members = AutomaticMembers(user.Channel);
+                if (https && HasLegacyVoiceParticipants(user.Channel, 0))
+                    throw new HubException(VoiceClientRefreshRequired);
                 if (https && (!capabilities.SupportsHttpsAudio || members.Any(id => !AutomaticVoiceUsers[id].SupportsHttpsAudio)))
                     throw new HubException("Everyone needs an HTTPS-audio-capable browser to switch this call to Stealth");
                 var opus = capabilities.SupportsOpus && (previous?.Opus ?? true);
@@ -274,7 +294,7 @@ namespace DomainLogic
                         : https ? capabilities.ForceStealth
                             ? "A participant requested Stealth audio; the whole call is audio-only."
                             : "A browser needs HTTPS audio; the whole call is audio-only."
-                        : "Automatic: using encrypted WebRTC."
+                        : WebRtcCallReason(user.Channel)
                 };
                 AutomaticVoiceUsers[Context.ConnectionId] = new VoiceCapabilities
                 {
@@ -302,6 +322,8 @@ namespace DomainLogic
                 var current = AutomaticCalls[user.Channel];
                 if (!current.HttpsAudio && current.MediaRevision == mediaRevision)
                 {
+                    if (HasLegacyVoiceParticipants(user.Channel, 0))
+                        throw new HubException(VoiceClientRefreshRequired);
                     if (AutomaticMembers(user.Channel).Any(id => !AutomaticVoiceUsers[id].SupportsHttpsAudio))
                         throw new HubException("A participant's browser cannot use HTTPS audio");
                     var revision = ++_voiceRevision;
@@ -321,6 +343,14 @@ namespace DomainLogic
 
         private static List<string> AutomaticMembers(string channel) => AutomaticVoiceUsers.Keys
             .Where(id => Users.TryGetValue(id, out var user) && user.Channel == channel).ToList();
+
+        private static bool HasLegacyVoiceParticipants(string channel, byte transport) => VoiceUsers.Any(pair =>
+            pair.Value == transport && !AutomaticVoiceUsers.ContainsKey(pair.Key) &&
+            Users.TryGetValue(pair.Key, out var user) && user.Channel == channel);
+
+        private static string WebRtcCallReason(string channel) => HasLegacyVoiceParticipants(channel, 0)
+            ? $"Automatic: using encrypted WebRTC. {VoiceClientRefreshRequired}"
+            : "Automatic: using encrypted WebRTC.";
 
         private static void SetAutomaticTransport(string channel, bool https)
         {
@@ -348,14 +378,20 @@ namespace DomainLogic
             foreach (var update in updates) await Clients.Client(update.Id).VoiceCallChanged(update.State);
         }
 
-        private async Task RemoveAutomaticVoice(string id, string channel)
+        private async Task RemoveAutomaticVoice(string id, string channel, bool wasInVoice)
         {
             lock (VoiceGate)
             {
-                if (!AutomaticVoiceUsers.TryRemove(id, out _)) return;
-                VoiceUsers.TryRemove(id, out _);
+                var automatic = AutomaticVoiceUsers.TryRemove(id, out _);
+                if (!automatic && !wasInVoice) return;
+                if (automatic) VoiceUsers.TryRemove(id, out _);
                 if (AutomaticMembers(channel).Count == 0) AutomaticCalls.Remove(channel);
-                else AutomaticCalls[channel].Revision = ++_voiceRevision;
+                else
+                {
+                    var call = AutomaticCalls[channel];
+                    call.Revision = ++_voiceRevision;
+                    if (!call.HttpsAudio) call.Reason = WebRtcCallReason(channel);
+                }
             }
             await NotifyAutomaticCall(channel);
         }
@@ -489,7 +525,8 @@ namespace DomainLogic
         {
             var userInfo = GetCurrentUser();
             AudioRates.TryRemove(Context.ConnectionId, out _);
-            if (VoiceUsers.TryRemove(Context.ConnectionId, out var transport))
+            var wasInVoice = VoiceUsers.TryRemove(Context.ConnectionId, out var transport);
+            if (wasInVoice)
             {
                 await Clients.Group(userInfo.Channel).VoiceParticipantLeft(Context.ConnectionId);
                 if (transport == 1)
@@ -498,7 +535,7 @@ namespace DomainLogic
                     await NotifyAll(userInfo.Channel, MessageTypeEnum.Left);
                 }
             }
-            await RemoveAutomaticVoice(Context.ConnectionId, userInfo.Channel);
+            await RemoveAutomaticVoice(Context.ConnectionId, userInfo.Channel, wasInVoice);
         }
 
         public Task SendVoiceOffer(string targetConnectionId, string offer)
@@ -535,7 +572,6 @@ namespace DomainLogic
             if (targetConnectionId == Context.ConnectionId ||
                 !VoiceUsers.TryGetValue(Context.ConnectionId, out var sourceTransport) || sourceTransport != 0 ||
                 !VoiceUsers.TryGetValue(targetConnectionId, out var targetTransport) || targetTransport != 0 ||
-                AutomaticVoiceUsers.ContainsKey(Context.ConnectionId) != AutomaticVoiceUsers.ContainsKey(targetConnectionId) ||
                 !Users.TryGetValue(targetConnectionId, out var target) ||
                 target.Channel != userInfo.Channel)
             {
