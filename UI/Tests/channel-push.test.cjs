@@ -14,6 +14,20 @@ test("notification actions wrap with spacing and keep long labels within narrow 
         "Both Havit buttons must fit the container and allow their labels to wrap");
 });
 
+test("all push hub operations use a locally derived password scope, reset on login and logout", async () => {
+    const source = await readFile(path.join(__dirname, "..", "SignalRStateManager.cs"), "utf8");
+    for (const call of [
+        "_server.HasChannelPush(deviceToken, await GetPushScope())",
+        "_server.SubscribeChannelPush(deviceToken, subscription, await GetPushScope())",
+        "_server.UnsubscribeChannelPush(deviceToken, await GetPushScope())",
+        "_server.NotifyChannel(await GetPushScope())"
+    ]) assert.ok(source.includes(call), `${call} must not omit the password scope`);
+    assert.match(source, /_pushScope \?\?= _payloadEncryptionService\.DerivePushScopeAsync\(login\.Password, login\.Channel\)/);
+    assert.match(source, /public async Task Login[\s\S]*?_pushScope = null;/);
+    assert.match(source, /public async Task Logout[\s\S]*?_pushScope = null;/);
+    assert.doesNotMatch(source, /_server\.(?:HasChannelPush|SubscribeChannelPush|UnsubscribeChannelPush|NotifyChannel)\([^;\n]*\.Password/);
+});
+
 async function harness({ permission = "granted", secure = true } = {}) {
     const storage = new Map();
     const calls = [];

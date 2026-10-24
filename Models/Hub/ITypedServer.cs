@@ -17,13 +17,13 @@ namespace Models.Hub
 
         Task<string> GetPushPublicKey();
 
-        Task<bool> HasChannelPush(string deviceToken);
+        Task<bool> HasChannelPush(string deviceToken, string passwordScope);
 
-        Task SubscribeChannelPush(string deviceToken, ChannelPushSubscription subscription);
+        Task SubscribeChannelPush(string deviceToken, ChannelPushSubscription subscription, string passwordScope);
 
-        Task UnsubscribeChannelPush(string deviceToken);
+        Task UnsubscribeChannelPush(string deviceToken, string passwordScope);
 
-        Task<ChannelPushResult> NotifyChannel();
+        Task<ChannelPushResult> NotifyChannel(string passwordScope);
 
         Task<List<VoiceParticipant>> JoinVoice();
 

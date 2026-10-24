@@ -149,22 +149,22 @@ namespace DomainLogic
             return Task.FromResult(_push.PublicKey);
         }
 
-        public Task<bool> HasChannelPush(string deviceToken) =>
-            Task.FromResult(_push.HasSubscription(GetCurrentUser().Channel, deviceToken));
+        public Task<bool> HasChannelPush(string deviceToken, string passwordScope) =>
+            Task.FromResult(_push.HasSubscription(GetCurrentUser().Channel, deviceToken, passwordScope));
 
-        public Task SubscribeChannelPush(string deviceToken, ChannelPushSubscription subscription)
+        public Task SubscribeChannelPush(string deviceToken, ChannelPushSubscription subscription, string passwordScope)
         {
-            _push.Subscribe(GetCurrentUser().Channel, deviceToken, subscription);
+            _push.Subscribe(GetCurrentUser().Channel, deviceToken, subscription, passwordScope);
             return Task.CompletedTask;
         }
 
-        public Task UnsubscribeChannelPush(string deviceToken)
+        public Task UnsubscribeChannelPush(string deviceToken, string passwordScope)
         {
-            _push.Unsubscribe(GetCurrentUser().Channel, deviceToken);
+            _push.Unsubscribe(GetCurrentUser().Channel, deviceToken, passwordScope);
             return Task.CompletedTask;
         }
 
-        public Task<ChannelPushResult> NotifyChannel() => _push.Notify(GetCurrentUser().Channel);
+        public Task<ChannelPushResult> NotifyChannel(string passwordScope) => _push.Notify(GetCurrentUser().Channel, passwordScope);
 
         private async Task RemoveConnection(string connectionId)
         {

@@ -137,7 +137,7 @@
                 <div>
                     <div class="form-check form-switch">
                         <input id="https-audio-mode" class="form-check-input" type="checkbox" role="switch"
-                               @bind="_forceStealth" disabled="@(_joined || _busy)" />
+                               @bind="_forceStealth" @bind:after="ForceStealthChanged" disabled="@(_joined || _busy || !_stealthPreferenceLoaded)" />
                         <label class="form-check-label" for="https-audio-mode">Force Audio over HTTPS (Stealth mode)</label>
                     </div>
                     <small class="text-muted">Automatic is the default: try WebRTC, then switch the whole call to encrypted HTTPS audio if media cannot connect. Enable this to skip WebRTC; other participants switch automatically. Stealth is audio-only, without video or transcription, and is not a guaranteed filtering bypass.</small>
@@ -277,6 +277,10 @@
     {
         <div class="text-danger mt-2" role="alert">@_error</div>
     }
+    @if (!string.IsNullOrWhiteSpace(_stealthPreferenceError))
+    {
+        <div class="text-danger mt-2" role="alert">@_stealthPreferenceError</div>
+    }
     @if (_unreadableHttpsPeers.Count > 0)
     {
         <div class="text-danger mt-2" role="alert">Unreadable Stealth audio - different password or invalid encrypted frames:
@@ -372,6 +376,9 @@
     private IJSObjectReference? _httpsAudioModule;
     private bool _useHttpsAudio;
     private bool _forceStealth;
+    private bool _stealthPreferenceLoaded;
+    private Task? _stealthPreferenceTask;
+    private string? _stealthPreferenceError;
     private bool _opusAudio;
     private bool _joiningAutomatic;
     private bool _answeringCall;
@@ -549,6 +556,7 @@
     {
         if (!firstRender) return;
 
+        await EnsureStealthPreference();
         try
         {
             await EnsureQualityDefaults();
@@ -562,9 +570,41 @@
 
     private Task EnsureQualityDefaults() => _qualityDefaultsTask ??= ApplyQualityDefaults();
 
+    private Task EnsureStealthPreference() => _stealthPreferenceTask ??= LoadStealthPreference();
+
+    private async Task LoadStealthPreference()
+    {
+        try
+        {
+            await using var defaults = await Js.InvokeAsync<IJSObjectReference>("import", CallAssetsPath + "media-defaults.js");
+            _forceStealth = await defaults.InvokeAsync<bool>("getForceStealthPreference");
+        }
+        catch (JSException exception)
+        {
+            Logger.LogWarning(exception, "Unable to restore the Stealth audio preference");
+            _stealthPreferenceError = "Could not restore the saved audio mode. Automatic is selected; choose your desired mode in Advanced settings for this visit.";
+        }
+        finally { _stealthPreferenceLoaded = true; }
+    }
+
+    private async Task ForceStealthChanged()
+    {
+        try
+        {
+            await using var defaults = await Js.InvokeAsync<IJSObjectReference>("import", CallAssetsPath + "media-defaults.js");
+            await defaults.InvokeVoidAsync("setForceStealthPreference", _forceStealth);
+            _stealthPreferenceError = null;
+        }
+        catch (JSException exception)
+        {
+            Logger.LogWarning(exception, "Unable to save the Stealth audio preference");
+            _stealthPreferenceError = "Could not save the audio mode in local storage. Your selection applies to this visit only.";
+        }
+    }
+
     private async Task ApplyQualityDefaults()
     {
-        await using var defaults = await Js.InvokeAsync<IJSObjectReference>("import", "./js/media-defaults.js");
+        await using var defaults = await Js.InvokeAsync<IJSObjectReference>("import", CallAssetsPath + "media-defaults.js");
         var quality = await defaults.InvokeAsync<string>("getDefaultMediaQuality");
         if (!_audioQualitySelected)
         {
@@ -626,6 +666,7 @@
 
         try
         {
+            await EnsureStealthPreference();
             await EnsureQualityDefaults();
             _reference ??= DotNetObjectReference.Create(this);
 

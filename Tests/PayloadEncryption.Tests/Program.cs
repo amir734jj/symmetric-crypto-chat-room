@@ -39,6 +39,28 @@ Console.WriteLine("PASS: official cryptography library matches independent AES-C
 var keyDerivation = new TestKeyDerivation();
 var service = new PayloadEncryptionService(cipher, NullLogger<PayloadEncryptionService>.Instance, keyDerivation);
 
+const string pushPassword = "local-only-push-password";
+var pushScope = await service.DerivePushScopeAsync(pushPassword, "public");
+var pushSalt = SHA256.HashData(Encoding.UTF8.GetBytes("symmetric-crypto-chat-room/push-salt/v1:public"))[..16];
+var pushKey = Rfc2898DeriveBytes.Pbkdf2(pushPassword, pushSalt, 210_000, HashAlgorithmName.SHA256, 32);
+var expectedPushScope = Convert.ToBase64String(HMACSHA256.HashData(pushKey,
+    Encoding.UTF8.GetBytes("symmetric-crypto-chat-room/push-scope/v1"))).TrimEnd('=').Replace('+', '-').Replace('/', '_');
+Check(pushScope == expectedPushScope && pushScope.Length == 43,
+    "Push scope must match independent domain-separated PBKDF2/HMAC derivation");
+Check(pushScope == await service.DerivePushScopeAsync(pushPassword, "public"),
+    "Matching channel/password pairs must have a stable scope regardless of username or browser");
+Check(pushScope != await service.DerivePushScopeAsync("other-password", "public") &&
+    pushScope != await service.DerivePushScopeAsync(pushPassword, "other-channel"),
+    "A different password or channel must produce a different notification scope");
+Check(pushScope != Convert.ToBase64String(pushKey).TrimEnd('=').Replace('+', '-').Replace('/', '_') &&
+    pushScope != Convert.ToBase64String(HashingUtility.DeriveVoiceKey(pushPassword, "public")).TrimEnd('=').Replace('+', '-').Replace('/', '_') &&
+    !pushScope.Contains(pushPassword, StringComparison.Ordinal),
+    "Notification identifiers must not expose passwords, their intermediate key, or media encryption keys");
+Check(await service.DerivePushScopeAsync("p\u00e4ss\uD83D\uDD11", "private-room") ==
+    await service.DerivePushScopeAsync("p\u00e4ss\uD83D\uDD11", "private-room"),
+    "Unicode shared passwords must derive consistent notification identifiers");
+Console.WriteLine("PASS: local password/channel-scoped notification derivation and encryption-key separation");
+
 var compressedBytes = Enumerable.Repeat((byte)65, 4096).ToArray();
 var binaryBytes = new byte[] { 0, 1, 2, 128, 255 };
 var payload = new MessagePayload

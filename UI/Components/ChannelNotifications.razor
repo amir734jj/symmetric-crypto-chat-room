@@ -7,6 +7,7 @@
     <h5>Channel notifications</h5>
     <p class="text-muted">
         Opt in on this device to receive a reminder when someone clicks Notify channel, even after closing this tab.
+        Reminders only reach devices enabled with the same channel and shared password, regardless of username.
         Messages are not sent automatically. Notifications show the channel name, never chat content.
         On iPhone/iPad, add this site to your Home Screen first.
     </p>
@@ -21,7 +22,7 @@
             Notify channel
         </HxButton>
     </div>
-    <div class="form-text">Subscriptions remain enabled after logout. Disable each channel here to stop reminders. At most one reminder per channel per minute.</div>
+    <div class="form-text">Subscriptions remain enabled after logout. Disable them using the same channel and password. At most one reminder per channel/password group per minute. Previously enabled devices must enable notifications again after the password-scoping upgrade.</div>
     @if (!string.IsNullOrEmpty(_status))
     {
         <div class="mt-2" role="status">@_status</div>
@@ -106,7 +107,7 @@
         {
             var result = await SignalRStateManager.NotifyChannel();
             _status = result.Accepted + result.Failed + result.Expired == 0
-                ? "No devices are subscribed to this channel."
+                ? "No devices are subscribed with this channel and password."
                 : $"Push service accepted: {result.Accepted}. Failed: {result.Failed}. Expired subscriptions removed: {result.Expired}. Acceptance does not confirm device delivery.";
             if (result.Failed > 0) _error = "Some notifications failed. Check the server push configuration and network connectivity.";
         }

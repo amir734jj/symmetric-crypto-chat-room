@@ -39,6 +39,10 @@ public sealed class PushNotificationService : IDisposable
         _subscriptions = database.GetCollection<StoredPushSubscription>("pushSubscriptions");
         _subscriptions.EnsureIndex(x => x.Channel);
         _subscriptions.EnsureIndex(x => x.DeviceHash);
+        // Legacy subscriptions have no password scope and cannot be safely assigned one.
+        var removed = _subscriptions.DeleteMany(x => x.PasswordScopeHash == null || x.PasswordScopeHash == "");
+        if (removed > 0)
+            logger.LogWarning("Removed {Count} unscoped push subscriptions; devices must enable notifications again", removed);
         _client = client;
         _logger = logger;
         var settings = options.Value;
@@ -55,13 +59,13 @@ public sealed class PushNotificationService : IDisposable
 
     public string PublicKey => _vapid?.PublicKey ?? "";
 
-    public bool HasSubscription(string channel, string deviceToken)
+    public bool HasSubscription(string channel, string deviceToken, string passwordScope)
     {
-        var id = SubscriptionId(channel, DeviceHash(deviceToken));
+        var id = SubscriptionId(channel, DeviceHash(deviceToken), ScopeHash(passwordScope));
         lock (_gate) return _subscriptions.Exists(x => x.Id == id);
     }
 
-    public void Subscribe(string channel, string deviceToken, ChannelPushSubscription subscription)
+    public void Subscribe(string channel, string deviceToken, ChannelPushSubscription subscription, string passwordScope)
     {
         RequireConfigured();
         if (string.IsNullOrWhiteSpace(channel) || channel.Length > 200)
@@ -71,7 +75,8 @@ public sealed class PushNotificationService : IDisposable
             throw new HubException("The browser push subscription is invalid or its push provider is unsupported.");
 
         var deviceHash = DeviceHash(deviceToken);
-        var id = SubscriptionId(channel, deviceHash);
+        var scopeHash = ScopeHash(passwordScope);
+        var id = SubscriptionId(channel, deviceHash, scopeHash);
         lock (_gate)
         {
             if (_subscriptions.Exists(x => x.Endpoint == subscription.Endpoint && x.DeviceHash != deviceHash))
@@ -79,32 +84,33 @@ public sealed class PushNotificationService : IDisposable
             var existing = _subscriptions.FindById(id);
             if (existing == null && (_subscriptions.Count(x => x.DeviceHash == deviceHash) >= 20 ||
                 _subscriptions.Count(x => x.Channel == channel) >= 500))
-                throw new HubException("The push subscription limit has been reached (20 channels per device, 500 devices per channel).");
+                throw new HubException("The push subscription limit has been reached (20 channel/password groups per device, 500 devices per channel).");
 
             _subscriptions.Upsert(new StoredPushSubscription
             {
-                Id = id, Channel = channel, DeviceHash = deviceHash,
+                Id = id, Channel = channel, DeviceHash = deviceHash, PasswordScopeHash = scopeHash,
                 Endpoint = subscription.Endpoint, P256dh = subscription.P256dh, Auth = subscription.Auth,
                 LastNotifiedUnixSeconds = existing?.LastNotifiedUnixSeconds ?? 0
             });
         }
     }
 
-    public void Unsubscribe(string channel, string deviceToken)
+    public void Unsubscribe(string channel, string deviceToken, string passwordScope)
     {
-        var id = SubscriptionId(channel, DeviceHash(deviceToken));
+        var id = SubscriptionId(channel, DeviceHash(deviceToken), ScopeHash(passwordScope));
         lock (_gate) _subscriptions.Delete(id);
     }
 
-    public async Task<ChannelPushResult> Notify(string channel)
+    public async Task<ChannelPushResult> Notify(string channel, string passwordScope)
     {
         RequireConfigured();
+        var scopeHash = ScopeHash(passwordScope);
         List<StoredPushSubscription> recipients;
         lock (_gate)
         {
-            recipients = _subscriptions.Find(x => x.Channel == channel).ToList();
+            recipients = _subscriptions.Find(x => x.Channel == channel && x.PasswordScopeHash == scopeHash).ToList();
             if (recipients.Any(x => x.LastNotifiedUnixSeconds > DateTimeOffset.UtcNow.ToUnixTimeSeconds() - 60))
-                throw new HubException("Please wait one minute between notifications to this channel.");
+                throw new HubException("Please wait one minute between notifications to this channel/password group.");
             foreach (var recipient in recipients)
             {
                 recipient.LastNotifiedUnixSeconds = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
@@ -169,7 +175,15 @@ public sealed class PushNotificationService : IDisposable
         return Hash(deviceToken);
     }
 
-    private static string SubscriptionId(string channel, string deviceHash) => Hash(channel + "\n" + deviceHash);
+    private static string ScopeHash(string passwordScope)
+    {
+        if (!ValidKey(passwordScope, 32))
+            throw new HubException("A valid password-scoped notification identifier is required. Refresh the page and enable notifications again.");
+        return Hash(passwordScope);
+    }
+
+    private static string SubscriptionId(string channel, string deviceHash, string scopeHash) =>
+        Hash(channel + "\n" + scopeHash + "\n" + deviceHash);
     private static string Hash(string value) => Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(value)));
 
     private static bool ValidKey(string value, int length)
@@ -221,6 +235,7 @@ public sealed class StoredPushSubscription
     public string Id { get; set; } = "";
     public string Channel { get; set; } = "";
     public string DeviceHash { get; set; } = "";
+    public string PasswordScopeHash { get; set; } = "";
     public string Endpoint { get; set; } = "";
     public string P256dh { get; set; } = "";
     public string Auth { get; set; } = "";

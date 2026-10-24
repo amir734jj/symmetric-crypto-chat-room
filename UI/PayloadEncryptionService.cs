@@ -15,6 +15,19 @@ public class PayloadEncryptionService(
     private const string TokenPrefix = "pbkdf2-sha256-v1:";
     private static readonly byte[] ConfirmationMessage = Encoding.UTF8.GetBytes("symmetric-crypto-chat-room/payload-key/v1");
 
+    public async Task<string> DerivePushScopeAsync(string password, string channel)
+    {
+        var salt = HashingUtility.HashString($"symmetric-crypto-chat-room/push-salt/v1:{channel}")[..16];
+        var keyMaterial = await DerivePayloadKeyAsync(password, salt);
+        try
+        {
+            using var hmac = new HMACSHA256(keyMaterial);
+            var scope = hmac.ComputeHash(Encoding.UTF8.GetBytes("symmetric-crypto-chat-room/push-scope/v1"));
+            return Convert.ToBase64String(scope).TrimEnd('=').Replace('+', '-').Replace('/', '_');
+        }
+        finally { CryptographicOperations.ZeroMemory(keyMaterial); }
+    }
+
     public async Task<MessagePayload> EncryptPayloadAsync(string password, MessagePayload payload)
     {
         logger.LogTrace("Starting payload encryption process");

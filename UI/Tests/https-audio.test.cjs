@@ -582,7 +582,7 @@ test("Automatic UI defaults to WebRTC and provides a whole-call Stealth override
     const option = markup.indexOf('id="https-audio-mode"');
     assert.ok(option > advanced);
     assert.match(markup, /Audio over HTTPS \(Stealth mode\)/);
-    assert.match(markup, /@bind="_forceStealth" disabled="@\(_joined \|\| _busy\)"/);
+    assert.match(markup, /@bind="_forceStealth" @bind:after="ForceStealthChanged" disabled="@\(_joined \|\| _busy \|\| !_stealthPreferenceLoaded\)"/);
     assert.match(markup, /private bool _forceStealth;/);
     assert.match(markup, /if \(!_useHttpsAudio\)[\s\S]*?OnClick="ToggleVideo"/);
     assert.match(markup, /JoinAutomaticVoice/);

@@ -44,6 +44,7 @@ public sealed class SignalRStateManager : AuthenticationStateProvider, IDisposab
     private readonly ITypedServer _server;
     private readonly HubConnection _hubConnection;
     private readonly string _clientInstanceId;
+    private Task<string>? _pushScope;
 
     public SignalRStateManager(
         HubConnection hubConnection,
@@ -144,6 +145,7 @@ public sealed class SignalRStateManager : AuthenticationStateProvider, IDisposab
         
         // sanitize channel
         login.Channel = login.Channel.Trim().ToKebabCase();
+        _pushScope = null;
         
         _state.UserInfo = login;
         
@@ -177,6 +179,7 @@ public sealed class SignalRStateManager : AuthenticationStateProvider, IDisposab
         }
 
         _state.UserInfo = null;
+        _pushScope = null;
         _state.Names = [];
         _state.OnlineUsers = [];
         _state.Messages.Clear();
@@ -187,11 +190,20 @@ public sealed class SignalRStateManager : AuthenticationStateProvider, IDisposab
     }
 
     public Task<string> GetPushPublicKey() => _server.GetPushPublicKey();
-    public Task<bool> HasChannelPush(string deviceToken) => _server.HasChannelPush(deviceToken);
-    public Task SubscribeChannelPush(string deviceToken, ChannelPushSubscription subscription) =>
-        _server.SubscribeChannelPush(deviceToken, subscription);
-    public Task UnsubscribeChannelPush(string deviceToken) => _server.UnsubscribeChannelPush(deviceToken);
-    public Task<ChannelPushResult> NotifyChannel() => _server.NotifyChannel();
+    public async Task<bool> HasChannelPush(string deviceToken) =>
+        await _server.HasChannelPush(deviceToken, await GetPushScope());
+    public async Task SubscribeChannelPush(string deviceToken, ChannelPushSubscription subscription) =>
+        await _server.SubscribeChannelPush(deviceToken, subscription, await GetPushScope());
+    public async Task UnsubscribeChannelPush(string deviceToken) =>
+        await _server.UnsubscribeChannelPush(deviceToken, await GetPushScope());
+    public async Task<ChannelPushResult> NotifyChannel() =>
+        await _server.NotifyChannel(await GetPushScope());
+
+    private Task<string> GetPushScope()
+    {
+        var login = _state.UserInfo ?? throw new InvalidOperationException("Join a channel before using notifications.");
+        return _pushScope ??= _payloadEncryptionService.DerivePushScopeAsync(login.Password, login.Channel);
+    }
 
     public async Task Send(MessagePayload messagePayload)
     {
