@@ -16,7 +16,7 @@ Simple secure chat room web (+ file transfer) application using SignalR (dotnet 
 - Updated clients can still decrypt cached messages using the legacy SHA-256 key derivation. Older clients cannot decrypt the new PBKDF2 message format and should be refreshed.
 - This key-derivation upgrade retains AES-CTR and does not add authenticated encryption or fix its existing zero-IV reuse across fields within a message. Password-derived confirmation values also permit offline password guessing; use a strong passphrase.
 - The active session password is stored as plaintext in browser `sessionStorage`. Successful logins are also retained in `localStorage` for optional quick login until individually removed or the site's storage is cleared.
-- After login, the URL includes the joined channel (for example, `/chat?channel=public`), never your name or password. Reloading restores the current session; opening the link without a session preselects the channel on the login page. Editing the URL does not switch an active session to another channel.
+- After login, the URL includes the joined channel and display name (for example, `/chat?channel=public&name=Alex`), never your password. Reloading restores the current session; opening the link without a session prefills the channel and name on the login page. Editing the URL does not change an active session's channel or name.
 - Used [LiteDB](https://www.litedb.org/) to replay encrypted messages and attachments to newly joined users, retained for 12 hours by default
 - [Fody.PropertyChanged](https://github.com/Fody/PropertyChanged) to detect if any of state's properties changes which triggers re-renders of UI
 

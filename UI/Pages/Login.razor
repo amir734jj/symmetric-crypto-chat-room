@@ -84,6 +84,9 @@
     [SupplyParameterFromQuery(Name = "channel")]
     public string? NotificationChannel { get; set; }
 
+    [SupplyParameterFromQuery(Name = "name")]
+    public string? NameFromQuery { get; set; }
+
     readonly LoginViewModel _model = new();
     readonly List<SavedLogin> _savedLogins = [];
     readonly List<ChannelSummary> _channels = [];
@@ -98,6 +101,8 @@
     {
         if (!string.IsNullOrWhiteSpace(NotificationChannel) && NotificationChannel.Length <= 200)
             _model.Channel = NotificationChannel;
+        if (!string.IsNullOrWhiteSpace(NameFromQuery) && NameFromQuery.Length <= 50)
+            _model.Name = NameFromQuery;
     }
 
     protected override async Task OnInitializedAsync()

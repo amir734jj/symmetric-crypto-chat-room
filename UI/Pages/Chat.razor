@@ -209,6 +209,9 @@
     [SupplyParameterFromQuery(Name = "channel")]
     public string? Channel { get; set; }
 
+    [SupplyParameterFromQuery(Name = "name")]
+    public string? Name { get; set; }
+
     private const long MaxFileSize = ChatConstants.MaxAttachmentBytes;
 
     private HxInputFile? _component;
@@ -237,9 +240,13 @@
 
     protected override void OnParametersSet()
     {
-        if (State.UserInfo is { } login && Channel != login.Channel)
+        if (State.UserInfo is { } login && (Channel != login.Channel || Name != login.Name))
         {
-            Navigation.NavigateTo(Navigation.GetUriWithQueryParameter("channel", login.Channel), replace: true);
+            Navigation.NavigateTo(Navigation.GetUriWithQueryParameters(new Dictionary<string, object?>
+            {
+                ["channel"] = login.Channel,
+                ["name"] = login.Name
+            }), replace: true);
         }
     }
 
@@ -249,9 +256,12 @@
 
         if (!SignalRStateManager.IsLoggedIn())
         {
-            Navigation.NavigateTo(string.IsNullOrWhiteSpace(Channel)
-                ? "/login"
-                : $"/login?channel={Uri.EscapeDataString(Channel)}");
+            Navigation.NavigateTo(Navigation.GetUriWithQueryParameters(
+                Navigation.ToAbsoluteUri("/login").AbsoluteUri, new Dictionary<string, object?>
+                {
+                    ["channel"] = string.IsNullOrWhiteSpace(Channel) ? null : Channel,
+                    ["name"] = string.IsNullOrWhiteSpace(Name) ? null : Name
+                }));
             return;
         }
 

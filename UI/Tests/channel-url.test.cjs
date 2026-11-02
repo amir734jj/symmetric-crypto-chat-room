@@ -3,18 +3,28 @@ const { readFile } = require("node:fs/promises");
 const path = require("node:path");
 const { test } = require("node:test");
 
-test("chat URL follows the joined channel on login, session restore and query changes", async () => {
+test("chat URL follows the joined channel and name on login, session restore and query changes", async () => {
     const source = await readFile(path.join(__dirname, "..", "Pages", "Chat.razor"), "utf8");
     assert.match(source, /\[SupplyParameterFromQuery\(Name = "channel"\)\]\s+public string\? Channel/);
+    assert.match(source, /\[SupplyParameterFromQuery\(Name = "name"\)\]\s+public string\? Name/);
     const parameters = source.match(/protected override void OnParametersSet\(\)([\s\S]*?)protected override async Task OnInitializedAsync/)[1];
-    assert.match(parameters, /State\.UserInfo is \{ \} login && Channel != login\.Channel/);
-    assert.match(parameters, /Navigation\.NavigateTo\(Navigation\.GetUriWithQueryParameter\("channel", login\.Channel\), replace: true\)/);
-    assert.doesNotMatch(parameters, /login\.(Name|Password)/);
+    assert.match(parameters, /State\.UserInfo is \{ \} login && \(Channel != login\.Channel \|\| Name != login\.Name\)/);
+    assert.match(parameters, /Navigation\.NavigateTo\(Navigation\.GetUriWithQueryParameters/);
+    assert.match(parameters, /\["channel"\] = login\.Channel/);
+    assert.match(parameters, /\["name"\] = login\.Name/);
+    assert.match(parameters, /replace: true/);
+    assert.doesNotMatch(parameters, /login\.Password/);
 });
 
-test("logged-out channel links preserve the encoded channel on the login page", async () => {
+test("logged-out chat links preserve and prefill the encoded channel and name", async () => {
     const source = await readFile(path.join(__dirname, "..", "Pages", "Chat.razor"), "utf8");
-    assert.match(source, /if \(!SignalRStateManager\.IsLoggedIn\(\)\)[\s\S]*?string\.IsNullOrWhiteSpace\(Channel\)\s+\? "\/login"\s+: \$"\/login\?channel=\{Uri\.EscapeDataString\(Channel\)\}"/);
+    assert.match(source, /if \(!SignalRStateManager\.IsLoggedIn\(\)\)[\s\S]*?Navigation\.GetUriWithQueryParameters\(\s+Navigation\.ToAbsoluteUri\("\/login"\)/);
+    for (const [key, property] of [["channel", "Channel"], ["name", "Name"]]) {
+        assert.ok(source.includes(`["${key}"] = string.IsNullOrWhiteSpace(${property}) ? null : ${property}`));
+    }
+    const login = await readFile(path.join(__dirname, "..", "Pages", "Login.razor"), "utf8");
+    assert.match(login, /\[SupplyParameterFromQuery\(Name = "name"\)\]\s+public string\? NameFromQuery/);
+    assert.match(login, /!string\.IsNullOrWhiteSpace\(NameFromQuery\) && NameFromQuery\.Length <= 50\)\s+_model\.Name = NameFromQuery/);
 });
 
 test("chat waits for session restoration before redirecting to channel login", async () => {
