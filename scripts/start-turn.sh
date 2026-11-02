@@ -7,7 +7,7 @@ set -eu
 set -- turnserver \
     --no-cli --fingerprint --use-auth-secret \
     "--static-auth-secret=$TURN_SECRET" \
-    "--realm=${TURN_REALM:-chat.coolify.hesamian.com}" \
+    "--realm=${TURN_REALM:-chat.hesamian.com}" \
     "--external-ip=$TURN_EXTERNAL_IP" \
     "--listening-port=${TURN_LISTENING_PORT:-3478}" \
     "--min-port=${TURN_MIN_PORT:-49160}" \

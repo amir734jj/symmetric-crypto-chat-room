@@ -171,16 +171,16 @@ Password derivation through Web Crypto and microphone/camera access require a se
 
 #### Coolify
 
-Create a Dockerfile resource for this repository and route `chat.coolify.hesamian.com` to container port `3000`. Configure persistent storage at `/app/data` for LiteDB playback data.
+Create a Dockerfile resource for this repository and route `chat.hesamian.com` to container port `3000`. Configure persistent storage at `/app/data` for LiteDB playback data.
 
 The chat image checks `http://127.0.0.1:3000/health` every 30 seconds. Coolify should report the container as healthy after its startup grace period.
 
-Create a second Dockerfile resource from the `stun-turn-setup` repository. Do not add `turn.coolify.hesamian.com` to Coolify's Domains panel because STUN/TURN is not HTTP. Publish TCP/UDP 3478 and UDP 49160-49200 directly from the coturn container to the host.
+Create a second Dockerfile resource from the `stun-turn-setup` repository. Do not add `turn.hesamian.com` to Coolify's Domains panel because STUN/TURN is not HTTP. Publish TCP/UDP 3478 and UDP 49160-49200 directly from the coturn container to the host.
 
 Set these environment variables on the chat service:
 
 ```env
-TURN_HOST=turn.coolify.hesamian.com
+TURN_HOST=turn.hesamian.com
 TURN_SECRET=replace-with-a-long-random-secret
 TURN_RELAY_ONLY=true
 ```
@@ -189,11 +189,11 @@ Set these environment variables on the coturn service:
 
 ```env
 TURN_EXTERNAL_IP=203.0.113.10
-TURN_REALM=chat.coolify.hesamian.com
+TURN_REALM=chat.hesamian.com
 TURN_SECRET=replace-with-the-same-long-random-secret
 ```
 
-Create a DNS-only `A` record at your DNS provider for `turn.coolify.hesamian.com`, pointing to the value of `TURN_EXTERNAL_IP`. When using Cloudflare, set it to DNS only. Allow TCP/UDP 3478 and UDP 49160-49200 in the server provider's firewall.
+Create a DNS-only `A` record at your DNS provider for `turn.hesamian.com`, pointing to the value of `TURN_EXTERNAL_IP`. When using Cloudflare, set it to DNS only. Allow TCP/UDP 3478 and UDP 49160-49200 in the server provider's firewall.
 
 To verify relay routing in Chromium or Edge, open `chrome://webrtc-internals` or `edge://webrtc-internals` during a call and inspect the selected ICE candidate pair. The local candidate type must be `relay`, and its relay protocol/address must correspond to the configured `TURN_HOST`. With `TURN_RELAY_ONLY=true`, a non-relay candidate cannot be selected.
 
