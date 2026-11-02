@@ -1,6 +1,6 @@
 FROM coturn/coturn:4.6.3
 
-ENV TURN_REALM=chat.coolify.hesamian.com \
+ENV TURN_REALM=chat.hesamian.com \
     TURN_MIN_PORT=49160 \
     TURN_MAX_PORT=49200 \
     TURN_LISTENING_PORT=3478 \
