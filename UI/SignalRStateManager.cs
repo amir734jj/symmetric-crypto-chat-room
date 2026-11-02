@@ -113,8 +113,6 @@ public sealed class SignalRStateManager : AuthenticationStateProvider, IDisposab
         {
             await _hubConnection.StartAsync();
             
-            _state.StateEnum = SignalRStateEnum.Initialized;
-
             var location = _navigation.ToAbsoluteUri(_navigation.Uri);
             var notificationChannel = HttpUtility.ParseQueryString(location.Query)["channel"];
             var channelLogin = location.AbsolutePath.TrimEnd('/').EndsWith("/login", StringComparison.OrdinalIgnoreCase) &&
@@ -125,6 +123,8 @@ public sealed class SignalRStateManager : AuthenticationStateProvider, IDisposab
                 
                 _navigation.NavigateTo("/Chat");
             }
+
+            _state.StateEnum = SignalRStateEnum.Initialized;
 
             _logger.LogTrace("Successfully initialized SignalRClientState");
         }

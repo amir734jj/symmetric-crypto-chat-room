@@ -206,6 +206,9 @@
 </audio>
 
 @code {
+    [SupplyParameterFromQuery(Name = "channel")]
+    public string? Channel { get; set; }
+
     private const long MaxFileSize = ChatConstants.MaxAttachmentBytes;
 
     private HxInputFile? _component;
@@ -232,11 +235,23 @@
         ? $"{minutes / 60} {(minutes == 60 ? "hour" : "hours")}"
         : $"{minutes} {(minutes == 1 ? "minute" : "minutes")}";
 
+    protected override void OnParametersSet()
+    {
+        if (State.UserInfo is { } login && Channel != login.Channel)
+        {
+            Navigation.NavigateTo(Navigation.GetUriWithQueryParameter("channel", login.Channel), replace: true);
+        }
+    }
+
     protected override async Task OnInitializedAsync()
     {
+        await SignalRStateManager.Initialize();
+
         if (!SignalRStateManager.IsLoggedIn())
         {
-            Navigation.NavigateTo("/");
+            Navigation.NavigateTo(string.IsNullOrWhiteSpace(Channel)
+                ? "/login"
+                : $"/login?channel={Uri.EscapeDataString(Channel)}");
             return;
         }
 
