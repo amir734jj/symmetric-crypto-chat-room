@@ -1,7 +1,5 @@
 # SymmetricCryptoChatRoom
 
-[![Docker pulls](https://img.shields.io/docker/pulls/amir734jj/symmetric-crypto-chatroom)](https://hub.docker.com/repository/docker/amir734jj/symmetric-crypto-chatroom)
-
 A shared-password chat room built with Blazor and SignalR. Supports encrypted messages, files, voice/video calls, screen sharing, and opt-in push reminders.
 
 ## Usage
